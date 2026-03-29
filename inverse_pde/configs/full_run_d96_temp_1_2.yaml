@@ -1,0 +1,58 @@
+seed: 42
+deterministic: false
+num_workers: 0
+
+data:
+  n_train: 64
+  n_val: 16
+  n_test: 16
+  grid_size: 32
+  m_min: 20
+  m_max: 40
+  noise_min: 0.001
+  noise_max: 0.01
+  matern_nu_choices: [0.5, 1.5, 2.5]
+  n_total_generate: 96
+
+model:
+  d_model: 96
+  n_heads: 4
+  n_layers: 2
+  dropout: 0.2
+  mc_samples: 8
+
+training:
+  lr: 1e-4
+  weight_decay: 1e-4
+  batch_size: 8
+  epochs: 50
+  patience: 10
+  lambda_reg: 0.01
+  grad_clip: 1.0
+  warmup_epochs: 5
+  min_epochs_before_early_stop: 20
+  sigma_floor: 0.1
+  sigma_reg_weight: 0.15
+  sanity_enabled: true
+  sanity_samples: 10
+  sanity_epochs: 200
+  sanity_lr: 5e-4
+  sanity_target_rmse: 0.1
+
+evaluation:
+  ece_bins: 15
+  coverage_level: 0.90
+  temperature_scaling:
+    enabled: true
+    objective: ece
+    t_min: 1.0
+    t_max: 2.0
+    n_steps: 51
+    coverage_min: 0.85
+    enforce_non_sharpening: true
+  pinn:
+    max_instances: 100
+    steps: 2000
+    min_steps: 700
+    convergence_tol: 1e-6
+    convergence_patience: 250

@@ -1,0 +1,44 @@
+# Python virtual environments
+.venv/
+.venv311/
+venv/
+env/
+
+# Python caches and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Test/type/lint/notebook caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode-test/
+
+# Runtime logs and temp files
+*.log
+*.tmp
+
+# Generated datasets and local benchmarks
+data/generated/
+data/_bench_gpu/
+
+# Training and evaluation artifacts
+outputs*/
+results*/
+
+# Checkpoints and binary tensors under generated artifact roots
+outputs*/**/*.pt
+data/generated/**/*.pt
+data/_bench_gpu/**/*.pt
+
+# Experiment tracking artifacts
+wandb/
+mlruns/
+tensorboard/
+events.out.tfevents*

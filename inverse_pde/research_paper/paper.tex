@@ -1,0 +1,445 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{graphicx}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{xcolor}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue!60!black,
+    citecolor=blue!60!black,
+    urlcolor=blue!60!black
+}
+
+\title{Amortized Probabilistic Inverse PDE Inference from Sparse Observations:\\
+A Conservative Empirical Study of Accuracy, Calibration, and Robustness}
+\author{Research Project Report}
+\date{March 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Inverse partial differential equation (PDE) inference seeks latent physical parameters from sparse and noisy measurements of system states. Although optimization-based inversion can provide high-fidelity reconstructions, it is often expensive and instance-specific. Amortized approaches offer a learned, one-pass alternative, but the quality of uncertainty estimates remains a central concern for scientific deployment. This paper presents an expanded empirical analysis of an amortized probabilistic inverse-PDE model with cross-attention encoding and uncertainty-aware decoding for recovering spatial conductivity fields. We evaluate both reconstruction error and uncertainty reliability under small-data conditions, with explicit conservatism due to a limited split size of 64/16/16 (train/validation/test).
+
+Using project-reported metrics, two operational regimes emerge in-distribution: a calibration-oriented configuration ($d_{model}=64$, no temperature scaling) achieves RMSE $0.3380$, ECE $0.196$, and 90\% coverage $0.932$; an accuracy-oriented configuration ($d_{model}=96$, no temperature scaling) achieves RMSE $0.3293$, ECE $0.298$, and coverage $0.950$. A Gaussian-process (GP) baseline yields RMSE $\sim 0.3285$, ECE $\sim 0.598$, and coverage $\sim 0.936$. Thus, the neural model can approach GP-level point accuracy while substantially improving calibration in the lower-capacity setting. Out-of-distribution (OOD) stress tests for the $d_{model}=64$ model indicate graceful but measurable degradation: high-noise RMSE $0.3229$, coverage $0.896$; few-observation RMSE $0.3099$, coverage $0.904$; rough-kernel ($\nu=0.5$) RMSE $0.3495$, coverage $0.876$.
+
+Post-hoc constrained temperature calibration for $d_{model}=96$ under $T\in[1,2]$ with non-sharpening constraints selects $T=1.0$, indicating no reliable gain from additional softening in this setting. Overall, results support amortized inverse modeling as a practical approach, while emphasizing that claims should remain moderate until validated on larger and more diverse benchmarks.
+\end{abstract}
+
+\noindent\textbf{Keywords:} inverse problems; partial differential equations; uncertainty quantification; calibration; neural operators; cross-attention; Gaussian processes; amortized inference
+
+\section{Introduction}
+Inverse PDE problems are foundational across engineering, geophysics, medical imaging, and climate science. In many applications, one does not directly observe latent material or transport coefficients; instead, one observes system responses and seeks to infer hidden fields that best explain those responses. A representative example is diffusion with unknown conductivity, where sparse measurements of a state variable must be mapped back to a spatially varying coefficient field.
+
+This task is intrinsically ill-posed under sparse and noisy observations. Multiple latent fields can produce similar observed states, and uncertainty quantification (UQ) is therefore not optional: it is part of the prediction itself. In practical workflows, decisions about sensing, intervention, and safety depend as much on confidence reliability as on mean-error values.
+
+Classical optimization-based inverse methods solve a constrained nonlinear problem for each new test instance. This per-instance optimization can be powerful but often incurs substantial runtime and sensitivity to initialization and regularization. In contrast, amortized inference learns a reusable mapping from observation sets to latent fields. Once trained, inference is immediate and does not require repeated numerical optimization over latent parameters for every new sample.
+
+However, amortization introduces tradeoffs. Neural models can achieve low point error yet misrepresent uncertainty. Inverse PDE applications require credible intervals with meaningful coverage and stable behavior under distribution shift. For that reason, this work frames evaluation around both \emph{accuracy} and \emph{reliability}, rather than optimizing only one metric.
+
+\paragraph{Contributions of this report.}
+This paper provides a substantially expanded and conservative analysis of an amortized inverse-PDE project, with emphasis on transparent reporting under small sample sizes:
+\begin{enumerate}[leftmargin=*]
+    \item We formalize the inverse PDE setting, probabilistic model, training objective, and constrained post-hoc calibration procedure with explicit equations.
+    \item We report in-distribution and OOD metrics using project-provided values, comparing neural model variants ($d_{model}=64$ and $d_{model}=96$) to a GP baseline.
+    \item We analyze a practical capacity-calibration tradeoff: larger model dimension improves RMSE but can degrade calibration.
+    \item We document constrained calibration behavior for the $d_{model}=96$ model, where feasible temperature search in $[1,2]$ selects $T=1.0$.
+    \item We explicitly bound interpretive claims due to split size 64/16/16 and recommend stronger statistical protocols for future work.
+\end{enumerate}
+
+\paragraph{Scope and caution.}
+All empirical statements should be interpreted as \emph{project-level evidence}, not broad generalization claims. The dataset split is small, confidence intervals are not estimated over many random seeds, and OOD tests are informative but narrow. The objective is not to assert universal superiority, but to provide a rigorous and reproducible account of observed behavior in this specific experimental context.
+
+\section{Related Work}
+\subsection{Inverse PDE Solvers}
+Inverse PDE methods are traditionally rooted in optimization, regularization theory, and adjoint-state techniques. These methods solve forward-constrained objectives and can incorporate rich physical priors, but are often computationally intensive and problem-specific. For nonlinear or high-dimensional latent fields, practical deployment may require substantial engineering effort and careful solver diagnostics.
+
+Physics-Informed Neural Networks (PINNs) \cite{raissi2019pinn} offer a neural framework that encodes PDE residuals and boundary conditions in the training objective. PINNs have demonstrated flexibility across forward and inverse tasks, though optimization can be stiff and sensitive to loss weighting, collocation strategy, and initialization. Inverse-PINN variants remain attractive where explicit PDE residual minimization is desired.
+
+\subsection{Operator Learning and Attention Mechanisms}
+Operator-learning methods, including Fourier Neural Operators \cite{li2021fno}, learn mappings between function spaces and have advanced PDE surrogate modeling. While most early operator-learning work emphasized forward modeling, the same representational ideas can support inverse inference if observation encoding is robust to sparsity and irregular sampling.
+
+Attention-based architectures \cite{vaswani2017attention} are particularly suitable for variable-length observation sets, because they do not assume fixed sensor locations or fixed ordering. Cross-attention mechanisms can map sparse observation tokens into grid-aligned latent representations, enabling direct reconstruction of structured latent fields.
+
+\subsection{Uncertainty Quantification and Calibration}
+Reliable predictive uncertainty in deep models remains an active research area. Aleatoric-epistemic decomposition \cite{kendall2017uncertainty}, approximate Bayesian methods such as MC dropout \cite{gal2016dropout}, deep ensembles, and evidential approaches have all been proposed, each with different tradeoffs in computational cost and statistical fidelity.
+
+Calibration metrics, originally popularized in classification, have increasingly been adapted to regression settings. Coverage-based diagnostics and expected calibration error (ECE)-style summaries help determine whether predicted intervals reflect empirical frequencies. In scientific machine learning, a model with slightly higher RMSE but substantially better calibration can be preferable for risk-aware decision-making.
+
+\subsection{Gaussian Processes as Strong Baselines}
+Gaussian Processes (GPs) \cite{rasmussen2006gp} remain competitive under limited data due to principled Bayesian treatment and kernel-driven inductive bias. In low-to-moderate data regimes, GP baselines often deliver strong uncertainty behavior and are therefore essential comparators for inverse modeling pipelines. At scale, computational complexity can become restrictive, but in compact settings they provide a high-quality reference point for both error and calibration.
+
+\section{Problem Formulation}
+\subsection{Forward PDE}
+Let $\Omega \subset \mathbb{R}^2$ denote the spatial domain with boundary $\partial \Omega$. We consider a diffusion-type elliptic PDE:
+\begin{equation}
+-\nabla \cdot \left(k(x)\nabla u(x)\right) = f(x), \qquad x \in \Omega,
+\label{eq:pde}
+\end{equation}
+with boundary condition
+\begin{equation}
+u(x) = 0, \qquad x \in \partial \Omega.
+\label{eq:bc}
+\end{equation}
+Here, $u(x)$ is the state field, $k(x)>0$ is an unknown latent conductivity field, and $f(x)$ is known forcing.
+
+\subsection{Observation Model}
+Instead of observing $u$ densely, we observe a sparse set
+\begin{equation}
+\mathcal{D}_{obs}=\{(x_i,y_i)\}_{i=1}^{M},
+\end{equation}
+where $x_i \in \Omega$ and
+\begin{equation}
+y_i = u(x_i) + \epsilon_i,\qquad \epsilon_i \sim \mathcal{N}(0,\sigma_{obs}^2).
+\label{eq:obs}
+\end{equation}
+The number of observations $M$ varies across instances, reflecting realistic sensing variability.
+
+\subsection{Inverse Objective}
+The target is to infer latent conductivity on a grid $\{g_j\}_{j=1}^{G}$ (with $G=32\times 32$ in this project), denoted $k_j = k(g_j)$. The model outputs a predictive distribution over latent coefficients:
+\begin{equation}
+p_{\theta}(k \mid \mathcal{D}_{obs})=\prod_{j=1}^{G}\mathcal{N}\!\left(k_j;\mu_{\theta,j}(\mathcal{D}_{obs}),\sigma^2_{\theta,j}(\mathcal{D}_{obs})\right),
+\label{eq:probmodel}
+\end{equation}
+where $\mu_{\theta,j}$ and $\sigma_{\theta,j}>0$ are predicted mean and standard deviation at grid point $j$.
+
+\subsection{Evaluation Goals}
+The project evaluates:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Point accuracy} via RMSE between reconstructed and ground-truth $k$.
+    \item \textbf{Uncertainty reliability} via calibration proxies (ECE-like metric) and interval coverage.
+\end{enumerate}
+Because split sizes are small (64/16/16), all metrics are interpreted as directional evidence rather than definitive performance bounds.
+
+\section{Methodology}
+\subsection{Synthetic Data Generation}
+Data are generated synthetically to ensure known ground truth and controlled perturbations:
+\begin{enumerate}[leftmargin=*]
+    \item Sample smooth random fields from Mat\'ern-family priors \cite{matern1960} to form candidate state and latent components.
+    \item Enforce positivity constraints for conductivity (e.g., through transformed latent parameterization).
+    \item Construct forcing terms consistent with sampled fields using differentiable operators.
+    \item Subsample noisy observations with variable counts and noise scales.
+\end{enumerate}
+This pipeline supports controlled in-distribution training plus targeted OOD perturbations (increased noise, fewer observations, lower smoothness $\nu=0.5$).
+
+\subsection{Architecture Overview}
+The model combines set-to-grid encoding with probabilistic decoding:
+
+\paragraph{Cross-attention encoder.}
+Each observation token includes spatial coordinates and measured value. A cross-attention mechanism maps variable-length tokens into latent embeddings aligned with reconstruction grid queries. This design naturally handles variable $M$ and irregular sampling geometry.
+
+\paragraph{Decoder head.}
+A probabilistic decoder outputs per-grid $(\mu_j,\log \sigma_j)$ for $j=1,\dots,G$. Predictive variances capture data-dependent heteroscedastic uncertainty; MC dropout adds an epistemic component via stochastic passes.
+
+\paragraph{Model capacities.}
+Two capacities are evaluated:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{$d_{model}=64$ (d64):} lower-capacity, calibration-oriented in observed outcomes.
+    \item \textbf{$d_{model}=96$ (d96):} higher-capacity, accuracy-oriented in observed outcomes.
+\end{itemize}
+Both are trained with two layers and dropout in the project configuration.
+
+\subsection{Training Objective}
+For sample $n$ and grid index $j$, with target $k_{n,j}$ and prediction $(\mu_{n,j},\sigma_{n,j})$, Gaussian negative log-likelihood is
+\begin{equation}
+\ell^{(n,j)}_{NLL}
+= \frac{1}{2}\log\!\left(2\pi \sigma_{n,j}^{2}\right)
++ \frac{\left(k_{n,j}-\mu_{n,j}\right)^2}{2\sigma_{n,j}^{2}}.
+\end{equation}
+Averaging over dataset size $N$ and grid size $G$:
+\begin{equation}
+\mathcal{L}_{NLL}
+=\frac{1}{NG}\sum_{n=1}^{N}\sum_{j=1}^{G}\ell^{(n,j)}_{NLL}.
+\label{eq:nll}
+\end{equation}
+Regularization terms stabilize uncertainty:
+\begin{equation}
+\mathcal{L}
+= \mathcal{L}_{NLL}
++ \lambda_{log\sigma}\|\log \sigma\|_2^2
++ \lambda_{floor}\,\mathrm{ReLU}(\sigma_{min}-\sigma).
+\label{eq:total_loss}
+\end{equation}
+The floor term discourages numerically unstable variance collapse.
+
+\subsection{Post-hoc Constrained Temperature Calibration}
+For predictive standard deviation $\sigma_j$, temperature scaling applies
+\begin{equation}
+\tilde{\sigma}_j(T)=T\,\sigma_j,\qquad T\in[1,2].
+\end{equation}
+The constrained validation objective can be written:
+\begin{align}
+T^\star &= \arg\min_{T\in[1,2]} \mathcal{L}_{val}^{NLL}(T) \\
+\text{s.t.}\quad
+\widehat{\mathrm{Cov}}_{val}^{90\%}(T) &\ge \widehat{\mathrm{Cov}}_{val}^{90\%}(1),
+\end{align}
+with non-sharpening enforced by $T\ge 1$. In project results for d96, this constrained procedure selects $T^\star=1.0$, implying no valid gain from additional softening under these constraints.
+
+\subsection{Metrics}
+\paragraph{RMSE.}
+\begin{equation}
+\mathrm{RMSE}
+= \sqrt{\frac{1}{NG}\sum_{n=1}^{N}\sum_{j=1}^{G}
+\left(\mu_{n,j}-k_{n,j}\right)^2 }.
+\end{equation}
+
+\paragraph{Coverage (90\% interval).}
+Define interval
+\begin{equation}
+I_{n,j}^{90\%}
+=
+\left[\mu_{n,j}-z_{0.95}\sigma_{n,j},\,
+\mu_{n,j}+z_{0.95}\sigma_{n,j}\right],
+\end{equation}
+then empirical coverage is
+\begin{equation}
+\widehat{\mathrm{Cov}}^{90\%}
+= \frac{1}{NG}\sum_{n=1}^{N}\sum_{j=1}^{G}
+\mathbf{1}\{k_{n,j}\in I_{n,j}^{90\%}\}.
+\end{equation}
+
+\paragraph{ECE proxy for regression.}
+Using $B$ bins over nominal confidence levels,
+\begin{equation}
+\mathrm{ECE}
+=
+\sum_{b=1}^{B}\frac{|S_b|}{\sum_{b'}|S_{b'}|}
+\left|
+\widehat{\mathrm{acc}}(S_b)-\widehat{\mathrm{conf}}(S_b)
+\right|,
+\end{equation}
+where $\widehat{\mathrm{acc}}(S_b)$ is empirical frequency and $\widehat{\mathrm{conf}}(S_b)$ nominal confidence within bin $b$. Lower is better.
+
+\section{Experimental Setup}
+\subsection{Data Splits and Statistical Context}
+The reported split is 64/16/16 (train/validation/test). This small sample regime is useful for stress-testing uncertainty but limits statistical power. Consequently:
+\begin{itemize}[leftmargin=*]
+    \item Metric differences should be interpreted conservatively.
+    \item Single-number comparisons are not equivalent to full uncertainty intervals across random seeds.
+    \item Conclusions emphasize observed tendencies rather than universal rankings.
+\end{itemize}
+
+\subsection{Baselines}
+Three comparator families are used:
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Amortized neural model (d64, d96):} probabilistic outputs with MC-dropout style uncertainty.
+    \item \textbf{Gaussian Process baseline:} strong kernel-based probabilistic regression reference.
+    \item \textbf{PINN-style and MLP baselines:} additional context on optimization-based and deterministic-style alternatives.
+\end{enumerate}
+This report focuses on metrics explicitly provided in project context for d64, d96, and GP.
+
+\subsection{In-distribution and OOD Protocol}
+\paragraph{In-distribution (ID).}
+Evaluation uses held-out test samples from the same generation regime.
+
+\paragraph{OOD scenarios (reported for d64 no-temperature).}
+\begin{itemize}[leftmargin=*]
+    \item \textbf{High-noise:} increased observation noise.
+    \item \textbf{Few-observations:} reduced number of observed points.
+    \item \textbf{Rough field prior:} Mat\'ern smoothness reduced to $\nu=0.5$.
+\end{itemize}
+These shifts probe robustness to sensing and prior-mismatch perturbations.
+
+\subsection{Calibration Constraint for d96}
+A constrained search over $T\in[1,2]$ with non-sharpening and coverage safeguards is applied for d96. The feasible optimum is $T=1.0$, indicating constrained calibration does not alter d96 predictions in the reported setting.
+
+\section{Results}
+\subsection{In-distribution Performance}
+Table~\ref{tab:id_results} summarizes key in-distribution metrics using project-provided values.
+
+\begin{table}[H]
+\centering
+\caption{In-distribution metrics (test split). Tildes denote approximate values reported for the GP baseline.}
+\label{tab:id_results}
+\begin{tabular}{lccc}
+\toprule
+Model / Configuration & RMSE $\downarrow$ & ECE $\downarrow$ & 90\% Coverage \\
+\midrule
+d64, no temperature & 0.3380 & \textbf{0.196} & 0.932 \\
+d96, no temperature & 0.3293 & 0.298 & \textbf{0.950} \\
+d96, constrained calibration ($T\in[1,2]$) & 0.3293 & 0.298 & 0.950 \\
+GP baseline & $\sim$0.3285 & $\sim$0.598 & $\sim$0.936 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Accuracy.}
+The d96 model closes most of the RMSE gap to GP: difference is approximately $0.3293-0.3285=0.0008$.
+
+\paragraph{Calibration.}
+The d64 model exhibits substantially better ECE than the GP baseline (0.196 vs. $\sim$0.598), with coverage near nominal (0.932 for a 0.90 target). This is notable for uncertainty reliability, though it comes with higher RMSE than d96 and GP.
+
+\paragraph{Coverage behavior.}
+d96 reports coverage 0.950, exceeding nominal 0.90 and suggesting conservative intervals. d64 at 0.932 is closer to nominal while retaining the best ECE among listed models.
+
+\paragraph{Constrained temperature outcome.}
+For d96, constrained calibration chooses $T=1.0$, so no post-hoc change is applied under the given safety constraints.
+
+\subsection{Out-of-distribution Performance}
+Table~\ref{tab:ood_results} reports OOD outcomes for d64 (no temperature), as provided.
+
+\begin{table}[H]
+\centering
+\caption{OOD metrics for d64 no-temperature model.}
+\label{tab:ood_results}
+\begin{tabular}{lcc}
+\toprule
+OOD Scenario & RMSE $\downarrow$ & 90\% Coverage \\
+\midrule
+High-noise observations & 0.3229 & 0.896 \\
+Few observations & 0.3099 & 0.904 \\
+Rough prior ($\nu=0.5$) & 0.3495 & 0.876 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Interpretation.}
+The model shows non-catastrophic degradation under noise and data sparsity shifts; coverage remains near nominal in the first two OOD cases (0.896, 0.904). The roughness shift ($\nu=0.5$) is more difficult, with both increased RMSE and reduced coverage (0.876), indicating sensitivity to prior smoothness mismatch.
+
+\subsection{Quantitative Takeaways}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Accuracy frontier:} d96 and GP are nearly tied in RMSE within this split.
+    \item \textbf{Reliability frontier:} d64 is strongest on ECE among reported configurations.
+    \item \textbf{Calibration constraint check:} d96 does not improve under constrained $T\in[1,2]$.
+    \item \textbf{OOD robustness:} d64 retains useful performance, but rough-kernel shift remains a stress point.
+\end{enumerate}
+
+\section{Discussion}
+\subsection{Accuracy--Calibration Tradeoff}
+A central empirical pattern is a capacity-linked tradeoff. Increasing latent dimension from 64 to 96 improves RMSE but worsens ECE. This is consistent with a broader observation in probabilistic deep learning: models optimized for sharp mean prediction can become overconfident unless uncertainty heads are explicitly regularized or recalibrated with sufficient validation signal.
+
+In this project, d64 appears more conservative and better calibrated by ECE, while d96 emphasizes fit quality. Depending on downstream risk tolerance, either operating point may be appropriate:
+\begin{itemize}[leftmargin=*]
+    \item If reliable uncertainty is primary, d64 is a practical choice.
+    \item If point reconstruction error dominates utility, d96 may be preferred.
+\end{itemize}
+Importantly, this is an \emph{operational} framing, not a claim of strict dominance.
+
+\subsection{Comparison Against GP}
+The GP baseline remains strong in RMSE despite approximate reporting. The key neural-model advantage in this context is not absolute RMSE superiority, but the combination of near-GP accuracy (d96) and much lower ECE in at least one neural configuration (d64). This suggests that amortized neural inverse models can be competitive under tight data budgets, especially when uncertainty behavior is explicitly monitored.
+
+\subsection{Why Constrained Calibration Matters}
+Unconstrained post-hoc calibration can produce visually improved metrics at the cost of unsafe uncertainty shrinking or overfitting validation noise. The imposed constraint $T\in[1,2]$ and non-sharpening policy are conservative safeguards. The resulting $T=1.0$ for d96 indicates that, under these safeguards, no robustly beneficial adjustment was found. This negative result is scientifically useful: it prevents overstating gains from post-hoc tuning.
+
+\subsection{OOD Behavior and Practical Reliability}
+OOD outcomes show that uncertainty quality degrades under stronger mismatch, especially roughness shift. Even so, the model does not collapse under high-noise and few-observation shifts. For practical use, this supports deployment with monitoring and fallback logic rather than unconditional trust. Inverse PDE systems in safety-critical contexts should include shift-detection or abstention mechanisms.
+
+\subsection{Conservative Claims Under Small Splits}
+Because test size is limited, apparent metric differences can be unstable. The report therefore avoids high-confidence ranking language. Stronger evidence would require repeated splits, seed sweeps, and interval estimates over metrics. Until then, this project should be read as a well-instrumented pilot study that motivates larger-scale validation.
+
+\section{Limitations}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Small sample size (64/16/16):} limits statistical confidence and may amplify variance in calibration metrics.
+    \item \textbf{Single-family PDE setting:} results may not transfer to different boundary conditions, forcing structures, anisotropy, or strongly nonlinear operators.
+    \item \textbf{Limited OOD axes:} only selected perturbations were tested; broader distribution shifts remain unexplored.
+    \item \textbf{Approximate baseline reporting:} GP metrics are reported with approximations, reducing precision in direct comparisons.
+    \item \textbf{Calibration metric dependence:} ECE-style measures can vary with binning and implementation details.
+    \item \textbf{No full seed-averaged confidence intervals:} uncertainty about metrics themselves is not quantified in this report.
+\end{enumerate}
+
+\section{Conclusion and Future Work}
+This expanded report examined amortized probabilistic inverse PDE inference from sparse noisy observations with a dual focus on reconstruction quality and uncertainty reliability. In the provided project metrics, d96 reaches near-GP RMSE while d64 yields substantially better calibration (ECE) than GP. OOD tests indicate graceful degradation in common stress settings and clearer weakness under roughness shift. Constrained post-hoc calibration for d96 selected $T=1.0$, reinforcing that no robust gain was available under non-sharpening safety constraints.
+
+The primary conclusion is pragmatic: amortized inverse models can provide useful and efficient reconstructions with meaningful uncertainty diagnostics, but performance claims should remain conservative in small-data settings. Calibration-aware model selection is essential, and single-metric optimization is insufficient for scientific applications.
+
+\paragraph{Future work.}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Larger evaluation protocol:} multi-seed, multi-split studies with confidence intervals for RMSE/ECE/coverage.
+    \item \textbf{Broader PDE families:} heterogeneous boundary conditions, anisotropic coefficients, and nonlinear inverse mappings.
+    \item \textbf{Improved UQ heads:} deep ensembles, heteroscedastic likelihood alternatives, and conformalized predictive intervals.
+    \item \textbf{Shift-robust calibration:} calibration objectives explicitly optimized under simulated distribution shifts.
+    \item \textbf{Active observation design:} adaptive sensor placement policies to reduce uncertainty under fixed measurement budgets.
+    \item \textbf{Physics-consistency regularization:} tighter coupling between latent reconstruction and PDE residual checks at inference.
+\end{enumerate}
+
+\section*{References}
+\begin{thebibliography}{99}
+
+\bibitem{raissi2019pinn}
+M. Raissi, P. Perdikaris, and G. E. Karniadakis,
+``Physics-informed neural networks: A deep learning framework for solving forward and inverse problems involving nonlinear partial differential equations,''
+\emph{Journal of Computational Physics}, 378:686--707, 2019.
+
+\bibitem{vaswani2017attention}
+A. Vaswani et al.,
+``Attention Is All You Need,''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+
+\bibitem{li2021fno}
+Z. Li et al.,
+``Fourier Neural Operator for Parametric Partial Differential Equations,''
+in \emph{International Conference on Learning Representations (ICLR)}, 2021.
+
+\bibitem{kovachki2023neuralops}
+N. Kovachki et al.,
+``Neural Operator: Learning Maps Between Function Spaces,''
+\emph{Journal of Machine Learning Research}, 24(89):1--97, 2023.
+
+\bibitem{lu2021deeponet}
+L. Lu, P. Jin, and G. E. Karniadakis,
+``Learning nonlinear operators via DeepONet based on the universal approximation theorem of operators,''
+\emph{Nature Machine Intelligence}, 3:218--229, 2021.
+
+\bibitem{rudi2017falkon}
+A. Rudi, L. Carratino, and L. Rosasco,
+``FALKON: An optimal large scale kernel method,''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+
+\bibitem{rasmussen2006gp}
+C. E. Rasmussen and C. K. I. Williams,
+\emph{Gaussian Processes for Machine Learning},
+MIT Press, 2006.
+
+\bibitem{williams1998prediction}
+C. K. I. Williams and C. E. Rasmussen,
+``Gaussian processes for regression,''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 1996.
+
+\bibitem{kendall2017uncertainty}
+A. Kendall and Y. Gal,
+``What Uncertainties Do We Need in Bayesian Deep Learning for Computer Vision?''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+
+\bibitem{gal2016dropout}
+Y. Gal and Z. Ghahramani,
+``Dropout as a Bayesian Approximation: Representing Model Uncertainty in Deep Learning,''
+in \emph{International Conference on Machine Learning (ICML)}, 2016.
+
+\bibitem{lakshminarayanan2017deepensembles}
+B. Lakshminarayanan, A. Pritzel, and C. Blundell,
+``Simple and Scalable Predictive Uncertainty Estimation using Deep Ensembles,''
+in \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+
+\bibitem{guo2017calibration}
+C. Guo, G. Pleiss, Y. Sun, and K. Q. Weinberger,
+``On Calibration of Modern Neural Networks,''
+in \emph{International Conference on Machine Learning (ICML)}, 2017.
+
+\bibitem{kuleshov2018calibrated}
+V. Kuleshov, N. Fenner, and S. Ermon,
+``Accurate Uncertainties for Deep Learning Using Calibrated Regression,''
+in \emph{International Conference on Machine Learning (ICML)}, 2018.
+
+\bibitem{angelopoulos2021conformal}
+A. N. Angelopoulos and S. Bates,
+``A Gentle Introduction to Conformal Prediction and Distribution-Free Uncertainty Quantification,''
+\emph{arXiv preprint arXiv:2107.07511}, 2021.
+
+\bibitem{matern1960}
+B. Mat\'ern,
+\emph{Spatial Variation},
+Meddelanden fran Statens Skogsforskningsinstitut, 1960.
+
+\end{thebibliography}
+
+\end{document}

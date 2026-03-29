@@ -1,0 +1,10 @@
+torch>=2.0
+numpy>=1.24
+scipy>=1.10
+scikit-learn>=1.2
+matplotlib>=3.7
+PyYAML>=6.0
+gpytorch>=1.11
+wandb>=0.16
+streamlit>=1.33
+pandas>=2.0

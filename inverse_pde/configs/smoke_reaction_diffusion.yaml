@@ -1,0 +1,60 @@
+seed: 42
+deterministic: false
+num_workers: 0
+
+data:
+  pde_family: reaction_diffusion
+  n_train: 64
+  n_val: 16
+  n_test: 16
+  grid_size: 32
+  m_min: 12
+  m_max: 20
+  noise_min: 0.001
+  noise_max: 0.01
+  noise_type: gaussian
+  k_type: gp
+  n_time_snapshots: 3
+  matern_nu_choices: [0.5, 1.5, 2.5]
+  n_total_generate: 96
+
+model:
+  d_model: 96
+  n_heads: 4
+  n_layers: 2
+  dropout: 0.1
+  mc_samples: 4
+  include_time: true
+
+training:
+  lr: 1e-4
+  weight_decay: 1e-5
+  batch_size: 8
+  epochs: 1
+  patience: 1
+  lambda_reg: 0.01
+  grad_clip: 1.0
+  min_epochs_before_early_stop: 1
+  sigma_floor: 0.1
+  sigma_reg_weight: 0.1
+  sanity_enabled: false
+  target_fields: [k_grid, r_grid]
+
+evaluation:
+  ece_bins: 10
+  coverage_level: 0.90
+  temperature_scaling:
+    enabled: false
+  pinn:
+    max_instances: 8
+    steps: 50
+    min_steps: 20
+    convergence_tol: 1e-6
+    convergence_patience: 20
+    optimizers: [adam, lbfgs]
+    lr_grid: [1e-3]
+  attention_visualization:
+    enabled: true
+    n_instances: 2
+    layer_idx: -1
+    head_idx: 0
