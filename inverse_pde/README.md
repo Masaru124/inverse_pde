@@ -1,103 +1,55 @@
 # Amortized Inverse PDE Solver
 
-Research codebase for learning a mapping from sparse noisy observations of u(x) to a distribution over k(x) for:
+This repository trains a neural inverse solver that maps sparse noisy observations of $u(x)$ to a distribution over $k(x)$ for diffusion PDEs.
 
-div(k(x) grad(u(x))) = f(x)
+## Maintained Configuration Set
+
+Only these configs are kept and supported:
+
+- `configs/default.yaml` (CLI fallback)
+- `configs/nonsmooth_v2.yaml` (main training config)
+- `configs/nonsmooth_v2_phase1.yaml` (short debugging run)
 
 ## Setup
 
 ```bash
 cd inverse_pde
-python -m venv .venv
+python -m venv .venv311
 # Windows PowerShell
-.venv\Scripts\Activate.ps1
+.venv311\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-## Quick Start (Local)
+## Main Workflow
 
-**For fast validation (smoke, ~6 min):**
-
-```powershell
-.\run_smoke_local.ps1
-```
-
-**For production run (full, ~1.5-2.5 hrs on RTX 4050):**
+### Option A: Maintained local runner
 
 ```powershell
 .\run_full_local.ps1
 ```
 
-Scripts auto-detect GPU, manage data generation, resolve checkpoints, and run full eval pipelines.
+This script:
 
-## One-line Commands
+1. Trains with `configs/nonsmooth_v2.yaml`
+2. Uses data directory `data/nonsmooth_v2_fixed`
+3. Writes artifacts to `outputs_nonsmooth_ece_stop`
+4. Runs evaluation into `results_eval_epoch004`
 
-```bash
-python main.py --mode train
-python main.py --mode evaluate --checkpoint path/to/ckpt.pt
-python main.py --mode baselines
-```
-
-## New Experiment Presets
-
-- reaction-diffusion multi-target training:
+### Option B: Direct commands
 
 ```bash
-python main.py --mode train --config configs/reaction_diffusion.yaml --data-dir data/reaction_diffusion --output-dir outputs_reaction_diffusion
-python main.py --mode evaluate --config configs/reaction_diffusion.yaml --checkpoint outputs_reaction_diffusion/checkpoints/<best>.pt --data-dir data/reaction_diffusion --results-dir results_reaction_diffusion
+python main.py --mode train --config configs/nonsmooth_v2.yaml --data-dir data/nonsmooth_v2_fixed --output-dir outputs_nonsmooth_ece_stop
+python main.py --mode evaluate --config configs/nonsmooth_v2.yaml --checkpoint outputs_nonsmooth_ece_stop/checkpoints/<best>.pt --data-dir data/nonsmooth_v2_fixed --results-dir results_eval_epoch004
 ```
 
-- non-smooth coefficient mix (60% GP + mixed sharp regimes):
+## Key Outputs
 
-```bash
-python main.py --mode train --config configs/diffusion_nonsmooth_mix.yaml --data-dir data/diffusion_nonsmooth --output-dir outputs_nonsmooth
-```
-
-- structured noise mix (gaussian/correlated/outlier):
-
-```bash
-python main.py --mode train --config configs/diffusion_structured_noise.yaml --data-dir data/diffusion_structured_noise --output-dir outputs_structured_noise
-```
-
-## Streamlit Frontend
-
-Run an interactive dashboard to inspect final metrics, compare configurations, and visualize OOD/calibration behavior:
-
-```bash
-streamlit run app.py
-```
-
-The app automatically reads:
-
-- summary table: `results_final_summary/comparison.csv`
-- run metrics: `results*/metrics.json`
-
-It also includes an Equation Playground tab where users can:
-
-- choose PDE variants (diffusion, Poisson, reaction-diffusion, advection-diffusion),
-- generate a synthetic test instance with configurable noise/observation count,
-- optionally run a selected checkpoint and view predicted `k`, error maps, and RMSE/MAE.
-
-## What Happens In Each Mode
-
-- train: validates generator first, auto-generates dataset shards if missing, then trains with early stopping and top-3 checkpoint retention.
-- evaluate: loads checkpoint, evaluates main model and baselines, runs OOD tests, saves metrics and figures.
-- baselines: runs baseline pipeline and writes baseline metrics into results.
-
-## Outputs
-
-- training logs: outputs/training_log.csv
-- checkpoints: outputs/checkpoints/\*.pt
-- evaluation metrics: results/metrics.json
-- figures: results/figures/instance_0.png ... instance_5.png
+- Training log: `outputs_nonsmooth_ece_stop/training_log.csv`
+- Best checkpoint(s): `outputs_nonsmooth_ece_stop/checkpoints/*.pt`
+- Evaluation metrics: `results_eval_epoch004/metrics.json`
 
 ## Notes
 
-- Synthetic data generation uses torch.autograd.grad for f computation.
-- Variable-length observations are supported through key padding masks in cross-attention.
-- Reaction-diffusion mode extends observation tokens from (x, u) to (x, t, u) and predicts both k(x) and r(x).
-- Generator now supports non-smooth coefficient samplers (piecewise/inclusion/checkerboard) and structured noise (correlated/outlier).
-- Evaluation now includes per-k-type metrics, expanded OOD conditions, PINN LR/optimizer sweeps, and 32->64 resolution transfer checks.
-- Attention maps are exported during evaluation to results/figures/attention when enabled in config.
-- MC dropout remains active at inference via explicit forced stochastic passes.
-- Global seed and deterministic behavior are configurable in configs/default.yaml.
+- Early stopping is configured for ECE-focused behavior in `configs/nonsmooth_v2.yaml`.
+- Dataset shards are auto-generated if missing.
+- Global seed and deterministic controls are set in config files.

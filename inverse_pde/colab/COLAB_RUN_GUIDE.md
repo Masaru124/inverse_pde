@@ -10,12 +10,9 @@ This folder contains a ready-to-run Colab notebook for training and evaluation.
 1. Clone your repository in Colab.
 2. Install dependencies from `requirements.txt`.
 3. Verify GPU availability.
-4. Run training for:
-   - baseline full run (`configs/full_run_d96.yaml`)
-   - non-smooth run (`configs/nonsmooth.yaml`)
-5. Run evaluation for each checkpoint.
-6. Create `results_final_summary/comparison_colab.csv`.
-7. Download a zip of outputs and results.
+4. Run training for the maintained nonsmooth-v2 setup (`configs/nonsmooth_v2.yaml`).
+5. Run evaluation for the selected checkpoint.
+6. Download outputs and results.
 
 ## How To Use
 
@@ -27,28 +24,23 @@ This folder contains a ready-to-run Colab notebook for training and evaluation.
 ## Important Runtime Notes
 
 - Full-size dataset settings are large (`n_train=40000`, `n_val=5000`, `n_test=5000`) and can take hours.
-- Dataset generation is automatic if `data/generated/dataset_shard_*.pt` is missing.
-- If you only want a quick validation run, set one of the smoke configs in the config cell.
+- Dataset generation is automatic if required shards are missing.
+- For quick validation, switch config to `configs/nonsmooth_v2_phase1.yaml`.
 
 ## Optional Quick-Run Swap
 
 In the config cell, replace:
 
-- `BASELINE_CONFIG = 'configs/full_run_d96.yaml'` with `configs/smoke.yaml`
-- `NONSMOOTH_CONFIG = 'configs/nonsmooth.yaml'` with `configs/smoke_nonsmooth.yaml`
+- `TRAIN_CONFIG = 'configs/nonsmooth_v2.yaml'` with `configs/nonsmooth_v2_phase1.yaml`
 
 Then rerun training and evaluation cells.
 
 ## Expected Artifacts
 
 - Training outputs:
-  - `outputs_colab_full_run_d96/`
-  - `outputs_colab_nonsmooth/`
+  - `outputs_colab_nonsmooth_v2/`
 - Evaluation outputs:
-  - `results_colab_full_run_d96/`
-  - `results_colab_nonsmooth/`
-- Summary CSV:
-  - `results_final_summary/comparison_colab.csv`
+  - `results_colab_nonsmooth_v2/`
 
 ## Troubleshooting
 
@@ -57,4 +49,4 @@ Then rerun training and evaluation cells.
 - Out of memory:
   - Reduce `training.batch_size` in the config.
 - Long runtime:
-  - Use smoke configs first to verify pipeline end-to-end.
+  - Use `configs/nonsmooth_v2_phase1.yaml` first to verify pipeline end-to-end.
