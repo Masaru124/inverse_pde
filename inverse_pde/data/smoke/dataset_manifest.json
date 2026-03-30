@@ -1,0 +1,18 @@
+{
+  "expected_samples": 96,
+  "grid_size": 32,
+  "k_type": "mixed",
+  "m_max": 30,
+  "m_min": 20,
+  "matern_nu_choices": [
+    0.5,
+    1.5,
+    2.5
+  ],
+  "n_time_snapshots": 3,
+  "noise_max": 0.01,
+  "noise_min": 0.001,
+  "noise_type": "gaussian",
+  "pde_family": "diffusion",
+  "required_split_samples": 96
+}

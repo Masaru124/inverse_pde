@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import heapq
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Dict
 
@@ -44,8 +45,9 @@ class TopKCheckpoints:
         self.k = k
         self.heap: list[tuple[float, Path]] = []
 
-    def add(self, score: float, payload: dict, epoch: int) -> None:
-        ckpt_path = self.out_dir / f"epoch_{epoch:03d}_valnll_{score:.6f}.pt"
+    def add(self, score: float, payload: dict, epoch: int, metric_name: str = "metric") -> None:
+        safe_metric = metric_name.replace(" ", "_")
+        ckpt_path = self.out_dir / f"epoch_{epoch:03d}_{safe_metric}_{score:.6f}.pt"
         torch.save(payload, ckpt_path)
 
         entry = (-score, ckpt_path)
@@ -67,7 +69,7 @@ class TopKCheckpoints:
 def _move_batch(batch: dict, device: torch.device) -> dict:
     out = {}
     for key, value in batch.items():
-        out[key] = value.to(device) if isinstance(value, torch.Tensor) else value
+        out[key] = value.to(device, non_blocking=True) if isinstance(value, torch.Tensor) else value
     return out
 
 
@@ -90,6 +92,7 @@ def _evaluate(
     ece_bins: int,
     coverage_level: float,
     target_fields: list[str],
+    amp_enabled: bool,
 ) -> Dict[str, float]:
     model.eval()
     val_loss = 0.0
@@ -102,23 +105,29 @@ def _evaluate(
     with torch.no_grad():
         for batch in loader:
             batch = _move_batch(batch, device)
-            mu, sigma, log_sigma = model.forward_with_logsigma(
-                batch["obs_coords"],
-                batch.get("obs_times"),
-                batch["obs_values"],
-                batch["obs_key_padding_mask"],
-                mc_dropout=False,
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.float16)
+                if amp_enabled and device.type == "cuda"
+                else nullcontext()
             )
-            target = _stack_targets(batch=batch, target_fields=target_fields)
-            loss, nll, _ = total_loss(
-                k_true=target,
-                mu=mu,
-                sigma=sigma,
-                log_sigma=log_sigma,
-                lambda_reg=lambda_reg,
-                sigma_floor=sigma_floor,
-                sigma_reg_weight=sigma_reg_weight,
-            )
+            with autocast_ctx:
+                mu, sigma, log_sigma = model.forward_with_logsigma(
+                    batch["obs_coords"],
+                    batch.get("obs_times"),
+                    batch["obs_values"],
+                    batch["obs_key_padding_mask"],
+                    mc_dropout=False,
+                )
+                target = _stack_targets(batch=batch, target_fields=target_fields)
+                loss, nll, _ = total_loss(
+                    k_true=target,
+                    mu=mu,
+                    sigma=sigma,
+                    log_sigma=log_sigma,
+                    lambda_reg=lambda_reg,
+                    sigma_floor=sigma_floor,
+                    sigma_reg_weight=sigma_reg_weight,
+                )
             metrics = batch_metrics(
                 mu=mu,
                 sigma=sigma,
@@ -160,7 +169,13 @@ def train_model(
     lr = float(config["training"]["lr"])
     weight_decay = float(config["training"]["weight_decay"])
     epochs = int(config["training"]["epochs"])
-    patience = int(config["training"]["patience"])
+    early_stop_metric = str(config["training"].get("early_stop_metric", "val_ece")).lower()
+    if early_stop_metric not in {"val_ece", "val_nll"}:
+        raise ValueError(f"Unsupported early_stop_metric: {early_stop_metric}")
+    if early_stop_metric == "val_ece":
+        patience = int(config["training"].get("patience_ece", 15))
+    else:
+        patience = int(config["training"].get("patience", 20))
     lambda_reg = float(config["training"]["lambda_reg"])
     grad_clip = float(config["training"]["grad_clip"])
     sigma_floor = float(config["training"].get("sigma_floor", 0.1))
@@ -171,8 +186,17 @@ def train_model(
     ece_bins = int(config["evaluation"]["ece_bins"])
     coverage_level = float(config["evaluation"]["coverage_level"])
     target_fields = list(config["training"].get("target_fields", ["k_grid"]))
+    amp_enabled = bool(config["training"].get("amp_enabled", device.type == "cuda")) and device.type == "cuda"
 
-    optimizer = AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+    optimizer_kwargs = {"lr": lr, "weight_decay": weight_decay}
+    if device.type == "cuda" and bool(config["training"].get("fused_adamw", True)):
+        try:
+            optimizer = AdamW(model.parameters(), fused=True, **optimizer_kwargs)
+        except TypeError:
+            optimizer = AdamW(model.parameters(), **optimizer_kwargs)
+    else:
+        optimizer = AdamW(model.parameters(), **optimizer_kwargs)
+    scaler = torch.amp.GradScaler(device="cuda", enabled=amp_enabled)
     if warmup_epochs > 0:
         warmup_epochs = min(warmup_epochs, max(1, epochs - 1))
         warmup = LinearLR(
@@ -190,20 +214,21 @@ def train_model(
     else:
         scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
 
-    use_wandb = wandb is not None
+    use_wandb = (wandb is not None) and bool(config["training"].get("wandb_enabled", True))
     csv_logger = CSVLogger(output_dir / "training_log.csv")
 
     if use_wandb:
         wandb.init(project="amortized-inverse-pde", config=config)
 
     model.to(device)
-    best_val_nll = float("inf")
+    best_metric_value = float("inf")
     wait = 0
     history = []
 
     for epoch in range(1, epochs + 1):
         model.train()
         epoch_train_nll = 0.0
+        epoch_train_rmse = 0.0
         n_batches = 0
 
         start = time.perf_counter()
@@ -211,33 +236,44 @@ def train_model(
             batch = _move_batch(batch, device)
             optimizer.zero_grad(set_to_none=True)
 
-            mu, sigma, log_sigma = model.forward_with_logsigma(
-                batch["obs_coords"],
-                batch.get("obs_times"),
-                batch["obs_values"],
-                batch["obs_key_padding_mask"],
-                mc_dropout=False,
+            autocast_ctx = (
+                torch.autocast(device_type="cuda", dtype=torch.float16)
+                if amp_enabled and device.type == "cuda"
+                else nullcontext()
             )
-            target = _stack_targets(batch=batch, target_fields=target_fields)
-            loss, nll, _ = total_loss(
-                k_true=target,
-                mu=mu,
-                sigma=sigma,
-                log_sigma=log_sigma,
-                lambda_reg=lambda_reg,
-                sigma_floor=sigma_floor,
-                sigma_reg_weight=sigma_reg_weight,
-            )
-            loss.backward()
+            with autocast_ctx:
+                mu, sigma, log_sigma = model.forward_with_logsigma(
+                    batch["obs_coords"],
+                    batch.get("obs_times"),
+                    batch["obs_values"],
+                    batch["obs_key_padding_mask"],
+                    mc_dropout=False,
+                )
+                target = _stack_targets(batch=batch, target_fields=target_fields)
+                loss, nll, _ = total_loss(
+                    k_true=target,
+                    mu=mu,
+                    sigma=sigma,
+                    log_sigma=log_sigma,
+                    lambda_reg=lambda_reg,
+                    sigma_floor=sigma_floor,
+                    sigma_reg_weight=sigma_reg_weight,
+                )
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
-            optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
 
             epoch_train_nll += float(nll.item())
+            epoch_train_rmse += float(torch.sqrt(torch.mean((mu - target) ** 2)).item())
             n_batches += 1
 
         scheduler.step()
 
         train_nll = epoch_train_nll / max(1, n_batches)
+        train_rmse = epoch_train_rmse / max(1, n_batches)
         val_stats = _evaluate(
             model=model,
             loader=val_loader,
@@ -248,12 +284,15 @@ def train_model(
             ece_bins=ece_bins,
             coverage_level=coverage_level,
             target_fields=target_fields,
+            amp_enabled=amp_enabled,
         )
 
         row = {
             "epoch": float(epoch),
+            "phase": "single",
             "lr": float(optimizer.param_groups[0]["lr"]),
             "train_nll": train_nll,
+            "train_rmse": train_rmse,
             "val_nll": val_stats["nll"],
             "val_rmse": val_stats["rmse"],
             "val_ece": val_stats["ece"],
@@ -263,21 +302,37 @@ def train_model(
         history.append(row)
         csv_logger.log(row)
 
+        print(
+            "[TRAIN] "
+            f"Epoch {epoch:03d}/{epochs:03d} | "
+            f"train_rmse={train_rmse:.6f} | "
+            f"val_rmse={val_stats['rmse']:.6f} | "
+            f"train_nll={train_nll:.6f} | "
+            f"val_nll={val_stats['nll']:.6f} | "
+            f"time={row['epoch_time_sec']:.1f}s",
+            flush=True,
+        )
+
         if use_wandb:
             wandb.log(row)
 
         ckpt_payload = {
             "epoch": epoch,
+            "phase": "single",
             "model_state_dict": model.state_dict(),
             "optimizer_state_dict": optimizer.state_dict(),
             "scheduler_state_dict": scheduler.state_dict(),
             "val_nll": val_stats["nll"],
+            "val_ece": val_stats["ece"],
+            "monitor_metric_name": early_stop_metric,
+            "monitor_metric_value": val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"],
             "config": config,
         }
-        ckpt_mgr.add(score=val_stats["nll"], payload=ckpt_payload, epoch=epoch)
+        monitor_value = val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"]
+        ckpt_mgr.add(score=monitor_value, payload=ckpt_payload, epoch=epoch, metric_name=early_stop_metric)
 
-        if val_stats["nll"] < best_val_nll:
-            best_val_nll = val_stats["nll"]
+        if monitor_value < best_metric_value:
+            best_metric_value = monitor_value
             wait = 0
         else:
             wait += 1
@@ -287,7 +342,11 @@ def train_model(
     if use_wandb:
         wandb.finish()
 
-    return {"best_val_nll": best_val_nll, "history": history}
+    return {
+        "best_metric_name": early_stop_metric,
+        "best_metric_value": best_metric_value,
+        "history": history,
+    }
 
 
 def run_overfit_sanity(

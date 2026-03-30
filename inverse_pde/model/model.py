@@ -28,7 +28,11 @@ class AmortizedInversePDEModel(nn.Module):
             dropout=dropout,
             include_time=include_time,
         )
-        self.decoder = ProbabilisticDecoder(d_model=d_model, dropout=dropout, n_targets=n_targets)
+        self.decoder = ProbabilisticDecoder(
+            d_model=d_model,
+            dropout=dropout,
+            n_targets=n_targets,
+        )
         self.mc_samples = mc_samples
         self.n_targets = n_targets
 

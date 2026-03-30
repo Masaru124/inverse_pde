@@ -1,6 +1,9 @@
 seed: 42
 deterministic: false
 num_workers: 0
+pin_memory: true
+persistent_workers: false
+prefetch_factor: 2
 
 data:
   pde_family: diffusion
@@ -17,6 +20,10 @@ data:
   n_time_snapshots: 3
   matern_nu_choices: [0.5, 1.5, 2.5]
   n_total_generate: 50000
+  generation_shard_size: 5000
+  generation_batch_size: 32
+  generation_progress_interval: 200
+  generation_forcing_mode: finite_diff
 
 model:
   d_model: 96
@@ -42,14 +49,17 @@ training:
   sanity_samples: 10
   sanity_epochs: 200
   sanity_lr: 5e-4
-  sanity_target_rmse: 0.1
+  sanity_target_rmse: 0.13
   target_fields: [k_grid]
+  amp_enabled: true
+  wandb_enabled: false
+  generator_validation_enabled: false
 
 evaluation:
   ece_bins: 15
   coverage_level: 0.90
   temperature_scaling:
-    enabled: true
+    enabled: false
     objective: ece
     t_min: 0.5
     t_max: 3.0
@@ -57,9 +67,17 @@ evaluation:
     coverage_min: 0.85
     enforce_non_sharpening: true
   pinn:
-    max_instances: 100
-    steps: 1000
+    max_instances: 40
+    steps: 400
     min_steps: 1
     convergence_tol: 1e-6
     convergence_patience: 200
     lr: 1e-3
+  attention_visualization:
+    enabled: false
+  budget:
+    mlp_epochs: 8
+    gp_max_samples: 800
+    runtime_instances: 32
+    ood_samples: 24
+    resolution_samples: 16

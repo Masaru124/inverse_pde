@@ -11,7 +11,7 @@ class InversePDEDataset(Dataset):
     def __init__(self, shards: List[str | Path]):
         self.samples: List[dict] = []
         for shard in shards:
-            loaded = torch.load(shard, map_location="cpu")
+            loaded = torch.load(shard, map_location="cpu", weights_only=True)
             if not isinstance(loaded, list):
                 raise ValueError(f"Expected shard to contain a list of samples, got {type(loaded)}")
             self.samples.extend(loaded)
@@ -92,13 +92,22 @@ def _sorted_shards(data_dir: str | Path) -> List[Path]:
     return shards
 
 
-def build_splits_from_shards(data_dir: str | Path, n_train: int, n_val: int, n_test: int, seed: int = 42):
+def build_splits_from_shards(
+    data_dir: str | Path,
+    n_train: int,
+    n_val: int,
+    n_test: int,
+    seed: int = 42,
+):
     shards = _sorted_shards(data_dir)
     dataset = InversePDEDataset(shards)
 
     total = n_train + n_val + n_test
-    if len(dataset) < total:
-        raise ValueError(f"Dataset has {len(dataset)} samples but split requires {total}")
+    if len(dataset) != total:
+        raise ValueError(
+            f"Dataset has {len(dataset)} samples but split requires exactly {total}. "
+            f"This usually means stale or extra shard files are present in {Path(data_dir)}."
+        )
 
     train_set, val_set, test_set = torch.utils.data.random_split(
         dataset,
@@ -116,6 +125,9 @@ def build_dataloaders(
     batch_size: int,
     seed: int = 42,
     num_workers: int = 0,
+    pin_memory: bool = False,
+    persistent_workers: bool = False,
+    prefetch_factor: int = 2,
 ):
     train_set, val_set, test_set = build_splits_from_shards(
         data_dir=data_dir,
@@ -125,26 +137,30 @@ def build_dataloaders(
         seed=seed,
     )
 
+    loader_kwargs = {
+        "batch_size": batch_size,
+        "num_workers": num_workers,
+        "collate_fn": collate_variable_observations,
+        "pin_memory": pin_memory,
+    }
+    if num_workers > 0:
+        loader_kwargs["persistent_workers"] = persistent_workers
+        loader_kwargs["prefetch_factor"] = max(2, int(prefetch_factor))
+
     train_loader = DataLoader(
         train_set,
-        batch_size=batch_size,
         shuffle=True,
-        num_workers=num_workers,
-        collate_fn=collate_variable_observations,
+        **loader_kwargs,
     )
     val_loader = DataLoader(
         val_set,
-        batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_variable_observations,
+        **loader_kwargs,
     )
     test_loader = DataLoader(
         test_set,
-        batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
-        collate_fn=collate_variable_observations,
+        **loader_kwargs,
     )
 
     return train_loader, val_loader, test_loader

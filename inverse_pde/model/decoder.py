@@ -17,6 +17,11 @@ class ProbabilisticDecoder(nn.Module):
         self.fc2 = nn.Linear(256, 128)
         self.fc3 = nn.Linear(128, 2 * n_targets)
         self.dropout = MCDropout(dropout)
+        
+        # Initialize fc3 with larger scale to produce outputs with std~1.0
+        nn.init.normal_(self.fc3.weight, mean=0.0, std=0.1)
+        if self.fc3.bias is not None:
+            nn.init.zeros_(self.fc3.bias)
 
     def forward(self, latent_grid: torch.Tensor, mc_dropout: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         x = self.fc1(latent_grid)
@@ -24,7 +29,8 @@ class ProbabilisticDecoder(nn.Module):
         x = self.dropout(x, force_mc=mc_dropout)
         x = self.fc2(x)
         x = F.gelu(x)
-        x = self.fc3(x)
+        x = self.fc3(x) * 5.0  # Scale to overcome initialization suppression and match target scale
+
 
         x = x.view(*x.shape[:-1], self.n_targets, 2)
         mu = x[..., 0]

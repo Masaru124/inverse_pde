@@ -14,6 +14,22 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Quick Start (Local)
+
+**For fast validation (smoke, ~6 min):**
+
+```powershell
+.\run_smoke_local.ps1
+```
+
+**For production run (full, ~1.5-2.5 hrs on RTX 4050):**
+
+```powershell
+.\run_full_local.ps1
+```
+
+Scripts auto-detect GPU, manage data generation, resolve checkpoints, and run full eval pipelines.
+
 ## One-line Commands
 
 ```bash

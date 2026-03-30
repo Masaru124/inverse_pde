@@ -18,7 +18,7 @@ from utils import ensure_dir
 
 
 def _move_batch(batch: dict, device: torch.device) -> dict:
-    return {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
+    return {k: (v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v) for k, v in batch.items()}
 
 
 def _stack_targets(batch: dict, target_fields: list[str]) -> torch.Tensor:
@@ -83,12 +83,15 @@ def evaluate_main_model(
             stats[key] += met[key]
         n += 1
 
-        k_types = batch.get("k_type", ["unknown"] * target.shape[0])
-        for idx, k_type in enumerate(k_types):
+        k_types = list(batch.get("k_type", ["unknown"] * target.shape[0]))
+        unique_k_types = set(k_types)
+        for k_type in unique_k_types:
+            idxs = [i for i, t in enumerate(k_types) if t == k_type]
+            idx_tensor = torch.tensor(idxs, device=target.device, dtype=torch.long)
             sub_met = batch_metrics(
-                mu=mu[idx : idx + 1],
-                sigma=sigma[idx : idx + 1],
-                target=target[idx : idx + 1],
+                mu=mu.index_select(0, idx_tensor),
+                sigma=sigma.index_select(0, idx_tensor),
+                target=target.index_select(0, idx_tensor),
                 ece_bins=ece_bins,
                 coverage_level=coverage_level,
             )
@@ -96,8 +99,8 @@ def evaluate_main_model(
                 grouped_by_k_type[k_type] = {"rmse": 0.0, "ece": 0.0, "coverage": 0.0}
                 grouped_count[k_type] = 0
             for m in grouped_by_k_type[k_type]:
-                grouped_by_k_type[k_type][m] += sub_met[m]
-            grouped_count[k_type] += 1
+                grouped_by_k_type[k_type][m] += sub_met[m] * len(idxs)
+            grouped_count[k_type] += len(idxs)
 
     out = {key: value / max(1, n) for key, value in stats.items()}
     out["by_k_type"] = _aggregate_grouped_metrics(grouped_by_k_type, grouped_count)
@@ -488,8 +491,11 @@ def run_full_evaluation(
     device: torch.device,
     output_dir: str | Path = "results",
     val_loader=None,
+    calibration_only: bool = False,
 ) -> dict:
     out_dir = ensure_dir(output_dir)
+    eval_start = time.perf_counter()
+    print(f"[EVAL] Starting evaluation. Output dir: {out_dir}", flush=True)
 
     ece_bins = int(config["evaluation"]["ece_bins"])
     coverage_level = float(config["evaluation"]["coverage_level"])
@@ -506,6 +512,7 @@ def run_full_evaluation(
     calibration_objective_name = str(temp_cfg.get("objective", "nll")).lower()
 
     if temp_enabled and val_loader is not None:
+        print("[EVAL] Fitting temperature scaling...", flush=True)
         calibration_result = fit_temperature_scaling(
             model=model,
             val_loader=val_loader,
@@ -527,7 +534,9 @@ def run_full_evaluation(
         calibration_fallback_reason = calibration_result["fallback_reason"]
 
     pinn_cfg = config["evaluation"].get("pinn", {})
+    eval_budget = config["evaluation"].get("budget", {})
 
+    print("[EVAL] Evaluating main model on test set...", flush=True)
     main_metrics = evaluate_main_model(
         model=model,
         test_loader=test_loader,
@@ -538,61 +547,94 @@ def run_full_evaluation(
         temperature=temperature,
     )
 
-    max_m = int(config["data"].get("m_max", 100)) * max(1, int(config["data"].get("n_time_snapshots", 1)))
-    mlp_baseline = MLPBaseline(max_m=max_m, grid_size=int(config["data"]["grid_size"]))
-    mlp_baseline = train_mlp_baseline(mlp_baseline, train_loader, device=device, epochs=20)
-    mlp_metrics = evaluate_mlp_baseline(
-        mlp_baseline,
-        test_loader,
-        device=device,
-        ece_bins=ece_bins,
-        coverage_level=coverage_level,
-    )
+    if calibration_only:
+        print("[EVAL] Calibration-only mode enabled; skipping baselines, runtime, OOD, and resolution transfer.", flush=True)
+        mlp_metrics = {}
+        gp_metrics = {}
+        pinn_metrics = {}
+        timing = {}
+        ood = {}
+        resolution_transfer = {}
+    else:
+        max_m = int(config["data"].get("m_max", 100)) * max(1, int(config["data"].get("n_time_snapshots", 1)))
+        print(f"[EVAL] Training MLP baseline (epochs={int(eval_budget.get('mlp_epochs', 20))})...", flush=True)
+        mlp_baseline = MLPBaseline(max_m=max_m, grid_size=int(config["data"]["grid_size"]))
+        mlp_baseline = train_mlp_baseline(
+            mlp_baseline,
+            train_loader,
+            device=device,
+            epochs=int(eval_budget.get("mlp_epochs", 20)),
+        )
+        mlp_metrics = evaluate_mlp_baseline(
+            mlp_baseline,
+            test_loader,
+            device=device,
+            ece_bins=ece_bins,
+            coverage_level=coverage_level,
+        )
 
-    gp_baseline = GPBaseline(max_m=max_m, grid_size=int(config["data"]["grid_size"]), n_components=16)
-    gp_baseline.fit(train_loader, max_samples=1500)
-    gp_metrics = evaluate_gp_baseline(
-        gp_baseline,
-        test_loader,
-        device=device,
-        ece_bins=ece_bins,
-        coverage_level=coverage_level,
-    )
+        print(f"[EVAL] Fitting GP baseline (max_samples={int(eval_budget.get('gp_max_samples', 1500))})...", flush=True)
+        gp_baseline = GPBaseline(max_m=max_m, grid_size=int(config["data"]["grid_size"]), n_components=16)
+        gp_baseline.fit(train_loader, max_samples=int(eval_budget.get("gp_max_samples", 1500)))
+        gp_metrics = evaluate_gp_baseline(
+            gp_baseline,
+            test_loader,
+            device=device,
+            ece_bins=ece_bins,
+            coverage_level=coverage_level,
+        )
 
-    pinn_metrics = evaluate_pinn_baseline(
-        test_loader=test_loader,
-        device=device,
-        ece_bins=ece_bins,
-        coverage_level=coverage_level,
-        max_instances=int(pinn_cfg.get("max_instances", 100)),
-        pinn_steps=int(pinn_cfg.get("steps", 1000)),
-        pinn_min_steps=int(pinn_cfg.get("min_steps", 1)),
-        pinn_convergence_tol=float(pinn_cfg.get("convergence_tol", 1e-6)),
-        pinn_convergence_patience=int(pinn_cfg.get("convergence_patience", 200)),
-        lr=float(pinn_cfg.get("lr", 1e-3)),
-    )
+        print(
+            "[EVAL] Running PINN baseline "
+            f"(max_instances={int(pinn_cfg.get('max_instances', 100))}, "
+            f"steps={int(pinn_cfg.get('steps', 1000))})...",
+            flush=True,
+        )
+        pinn_metrics = evaluate_pinn_baseline(
+            test_loader=test_loader,
+            device=device,
+            ece_bins=ece_bins,
+            coverage_level=coverage_level,
+            max_instances=int(pinn_cfg.get("max_instances", 100)),
+            pinn_steps=int(pinn_cfg.get("steps", 1000)),
+            pinn_min_steps=int(pinn_cfg.get("min_steps", 1)),
+            pinn_convergence_tol=float(pinn_cfg.get("convergence_tol", 1e-6)),
+            pinn_convergence_patience=int(pinn_cfg.get("convergence_patience", 200)),
+            lr=float(pinn_cfg.get("lr", 1e-3)),
+        )
 
-    timing = runtime_main_vs_pinn(model=model, test_loader=test_loader, device=device, n_instances=100)
-    ood = evaluate_ood(
-        model=model,
-        device=device,
-        ece_bins=ece_bins,
-        coverage_level=coverage_level,
-        grid_size=int(config["data"]["grid_size"]),
-        target_fields=target_fields,
-        pde_family=pde_family,
-        n_samples=64,
-        temperature=temperature,
-    )
-    resolution_transfer = evaluate_resolution_transfer(
-        model=model,
-        device=device,
-        ece_bins=ece_bins,
-        coverage_level=coverage_level,
-        target_fields=target_fields,
-        pde_family=pde_family,
-        n_samples=32,
-    )
+        print(f"[EVAL] Measuring runtime (instances={int(eval_budget.get('runtime_instances', 100))})...", flush=True)
+        timing = runtime_main_vs_pinn(
+            model=model,
+            test_loader=test_loader,
+            device=device,
+            n_instances=int(eval_budget.get("runtime_instances", 100)),
+        )
+        print(f"[EVAL] Running OOD suite (samples/case={int(eval_budget.get('ood_samples', 64))})...", flush=True)
+        ood = evaluate_ood(
+            model=model,
+            device=device,
+            ece_bins=ece_bins,
+            coverage_level=coverage_level,
+            grid_size=int(config["data"]["grid_size"]),
+            target_fields=target_fields,
+            pde_family=pde_family,
+            n_samples=int(eval_budget.get("ood_samples", 64)),
+            temperature=temperature,
+        )
+        print(
+            f"[EVAL] Running resolution transfer (samples={int(eval_budget.get('resolution_samples', 32))})...",
+            flush=True,
+        )
+        resolution_transfer = evaluate_resolution_transfer(
+            model=model,
+            device=device,
+            ece_bins=ece_bins,
+            coverage_level=coverage_level,
+            target_fields=target_fields,
+            pde_family=pde_family,
+            n_samples=int(eval_budget.get("resolution_samples", 32)),
+        )
 
     best_pinn = pinn_metrics
     result = {
@@ -625,5 +667,8 @@ def run_full_evaluation(
 
     with open(out_dir / "metrics.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
+
+    elapsed = time.perf_counter() - eval_start
+    print(f"[EVAL] Completed in {elapsed:.1f}s. Metrics written to {out_dir / 'metrics.json'}", flush=True)
 
     return result

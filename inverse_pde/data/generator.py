@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 PDEFamily = Literal["diffusion", "reaction_diffusion"]
-KType = Literal["gp", "inclusion", "checkerboard", "mixed"]
+KType = Literal["gp", "inclusion", "soft_inclusion", "checkerboard", "mixed"]
 NoiseType = Literal["gaussian", "correlated", "outlier", "mixed"]
 
 
@@ -88,17 +88,39 @@ def _sample_inclusion_k_grid(grid_size: int, device: torch.device) -> torch.Tens
     coords = _build_grid(grid_size=grid_size, device=device)
     x = coords[:, 0]
     y = coords[:, 1]
-    bg_val = float(torch.empty(1, device=device).uniform_(0.3, 0.8).item())
+    bg_val = float(torch.empty(1, device=device).uniform_(0.3, 0.6).item())
     k = torch.full((coords.shape[0],), bg_val, device=device)
 
     n_inc = int(torch.randint(1, 4, (1,), device=device).item())
     for _ in range(n_inc):
         cx, cy = torch.rand(2, device=device)
         r = float(torch.empty(1, device=device).uniform_(0.05, 0.20).item())
-        val = float(torch.empty(1, device=device).uniform_(1.0, 2.0).item())
+        val = float(torch.empty(1, device=device).uniform_(0.7, 1.2).item())
         mask = ((x - cx) ** 2 + (y - cy) ** 2) <= (r**2)
         k[mask] = val
     return (F.softplus(k) + 1e-6).reshape(grid_size, grid_size)
+
+
+def _gaussian_kernel2d(sigma: float, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+    sigma = max(float(sigma), 1e-3)
+    radius = max(1, int(round(3.0 * sigma)))
+    coords = torch.arange(-radius, radius + 1, device=device, dtype=dtype)
+    kernel_1d = torch.exp(-(coords**2) / (2.0 * sigma * sigma))
+    kernel_1d = kernel_1d / kernel_1d.sum()
+    kernel_2d = torch.outer(kernel_1d, kernel_1d)
+    kernel_2d = kernel_2d / kernel_2d.sum()
+    return kernel_2d
+
+
+def _sample_soft_inclusion_k_grid(grid_size: int, device: torch.device) -> torch.Tensor:
+    hard_k = _sample_inclusion_k_grid(grid_size=grid_size, device=device)
+    sigma_blur = float(torch.empty(1, device=device).uniform_(0.5, 2.0).item())
+    kernel = _gaussian_kernel2d(sigma=sigma_blur, device=device, dtype=hard_k.dtype)
+    pad = kernel.shape[-1] // 2
+    k_in = hard_k.unsqueeze(0).unsqueeze(0)
+    kernel = kernel.unsqueeze(0).unsqueeze(0)
+    blurred = F.conv2d(F.pad(k_in, (pad, pad, pad, pad), mode="reflect"), kernel).squeeze(0).squeeze(0)
+    return torch.clamp(blurred, min=1e-6)
 
 
 def _sample_checkerboard_k_grid(grid_size: int, device: torch.device) -> torch.Tensor:
@@ -116,22 +138,35 @@ def _sample_k_from_type(
     coords: torch.Tensor,
     nu_choices: Tuple[float, ...],
     device: torch.device,
+    fast_gp: bool = False,
 ) -> Tuple[torch.Tensor, str]:
     if k_type == "mixed":
-        # 70% GP + 30% inclusion; piecewise is intentionally removed.
+        # 60% GP + 20% hard inclusion + 20% soft inclusion.
         p = float(torch.rand(1, device=device).item())
-        k_type = "gp" if p < 0.7 else "inclusion"
+        if p < 0.6:
+            k_type = "gp"
+        elif p < 0.8:
+            k_type = "inclusion"
+        else:
+            k_type = "soft_inclusion"
 
     if k_type == "gp":
-        nu_k = float(nu_choices[torch.randint(0, len(nu_choices), (1,)).item()])
-        ls_k = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.8, 1.6)
-        var_k = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.3, 0.8)
-        k_raw = _sample_gp_field(coords=coords, nu=nu_k, lengthscale=ls_k, variance=var_k)
+        if fast_gp:
+            ls_k = float(torch.empty(1, device=device).uniform_(0.8, 1.6).item())
+            var_k = float(torch.empty(1, device=device).uniform_(0.3, 0.8).item())
+            k_raw = _sample_rff_field(coords=coords, lengthscale=ls_k, variance=var_k, n_features=64)
+        else:
+            nu_k = float(nu_choices[torch.randint(0, len(nu_choices), (1,)).item()])
+            ls_k = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.8, 1.6)
+            var_k = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.3, 0.8)
+            k_raw = _sample_gp_field(coords=coords, nu=nu_k, lengthscale=ls_k, variance=var_k)
         k_flat = F.softplus(k_raw) + 1e-6
         return k_flat.reshape(grid_size, grid_size), "gp"
 
     if k_type == "inclusion":
         return _sample_inclusion_k_grid(grid_size=grid_size, device=device), "inclusion"
+    if k_type == "soft_inclusion":
+        return _sample_soft_inclusion_k_grid(grid_size=grid_size, device=device), "soft_inclusion"
     if k_type == "checkerboard":
         return _sample_checkerboard_k_grid(grid_size=grid_size, device=device), "checkerboard"
 
@@ -187,6 +222,7 @@ def generate_instance(
     noise_type: NoiseType = "gaussian",
     n_time_snapshots: int = 3,
     device: torch.device | None = None,
+    fast_gp: bool = False,
 ) -> Dict[str, torch.Tensor | str | float]:
     if pde_family == "reaction_diffusion":
         return generate_reaction_diffusion_instance(
@@ -201,20 +237,26 @@ def generate_instance(
         )
 
     device = device or torch.device("cpu")
-    coords = _build_grid(grid_size=grid_size, device=device).to(torch.float64).requires_grad_(True)
+    coords_dtype = torch.float32 if fast_gp else torch.float64
+    coords = _build_grid(grid_size=grid_size, device=device).to(coords_dtype).requires_grad_(True)
 
-    nu_u = float(nu_choices[torch.randint(0, len(nu_choices), (1,)).item()])
-    # Smoother priors improve consistency between autograd and finite-difference checks.
-    ls_u = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.8, 1.6)
-    var_u = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.3, 0.8)
-
-    u_flat = _sample_gp_field(coords=coords, nu=nu_u, lengthscale=ls_u, variance=var_u)
+    if fast_gp:
+        ls_u = float(torch.empty(1, device=device).uniform_(0.8, 1.6).item())
+        var_u = float(torch.empty(1, device=device).uniform_(0.3, 0.8).item())
+        u_flat = _sample_rff_field(coords=coords, lengthscale=ls_u, variance=var_u, n_features=96)
+    else:
+        nu_u = float(nu_choices[torch.randint(0, len(nu_choices), (1,)).item()])
+        # Smoother priors improve consistency between autograd and finite-difference checks.
+        ls_u = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.8, 1.6)
+        var_u = torch.empty(1, device=device, dtype=torch.float64).uniform_(0.3, 0.8)
+        u_flat = _sample_gp_field(coords=coords, nu=nu_u, lengthscale=ls_u, variance=var_u)
     k_grid64, resolved_k_type = _sample_k_from_type(
         k_type=k_type,
         grid_size=grid_size,
         coords=coords,
         nu_choices=nu_choices,
         device=device,
+        fast_gp=fast_gp,
     )
     k_flat = k_grid64.reshape(-1)
 
@@ -409,6 +451,9 @@ def generate_dataset_to_disk(
     noise_type: NoiseType = "gaussian",
     n_time_snapshots: int = 3,
     device: torch.device | None = None,
+    generate_batch_size: int = 1,
+    progress_interval: int = 5000,
+    forcing_mode: str = "finite_diff",
 ) -> Dict[str, float]:
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
@@ -419,6 +464,13 @@ def generate_dataset_to_disk(
     shard: List[dict] = []
     shard_id = 0
     start = time.time()
+    progress_interval = max(1, int(progress_interval))
+
+    print(
+        f"[GEN] Starting dataset generation: {n_instances} instances, {shard_size} per shard",
+        flush=True,
+    )
+    print(f"[GEN] Output: {out_path} | Device: {device}", flush=True)
 
     for i in range(n_instances):
         sample = generate_instance(
@@ -433,15 +485,34 @@ def generate_dataset_to_disk(
             noise_type=noise_type,
             n_time_snapshots=n_time_snapshots,
             device=device,
+            fast_gp=True,
         )
         shard.append(sample)
 
+        generated = i + 1
+        if generated % progress_interval == 0 or generated == n_instances:
+            elapsed = time.time() - start
+            rate = generated / elapsed if elapsed > 0 else 0.0
+            remaining = n_instances - generated
+            eta_sec = remaining / rate if rate > 0 else 0.0
+            print(
+                f"[GEN] Progress: {generated:6d}/{n_instances} | "
+                f"Shards: {shard_id:3d} full | Buffer: {len(shard):4d}/{shard_size} | "
+                f"{elapsed:7.1f}s elapsed | ETA {eta_sec:7.1f}s",
+                flush=True,
+            )
+
         if len(shard) >= shard_size or i == n_instances - 1:
             torch.save(shard, out_path / f"dataset_shard_{shard_id:05d}.pt")
+            print(f"[GEN] Saved shard {shard_id:05d}: {len(shard)} samples", flush=True)
             shard.clear()
             shard_id += 1
 
     elapsed = time.time() - start
+    print(
+        f"[GEN] Completed: {n_instances} instances in {elapsed:.1f}s, {shard_id} shards created",
+        flush=True,
+    )
     return {
         "n_instances": float(n_instances),
         "n_shards": float(shard_id),

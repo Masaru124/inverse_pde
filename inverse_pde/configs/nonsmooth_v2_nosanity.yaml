@@ -1,0 +1,81 @@
+data:
+  generation_batch_size: 32
+  generation_forcing_mode: finite_diff
+  generation_progress_interval: 200
+  generation_shard_size: 5000
+  grid_size: 32
+  k_type: mixed
+  m_max: 100
+  m_min: 20
+  matern_nu_choices:
+  - 0.5
+  - 1.5
+  - 2.5
+  n_test: 5000
+  n_time_snapshots: 3
+  n_total_generate: 50000
+  n_train: 40000
+  n_val: 5000
+  noise_max: 0.05
+  noise_min: 0.001
+  noise_type: gaussian
+  pde_family: diffusion
+deterministic: false
+evaluation:
+  attention_visualization:
+    enabled: false
+    head_idx: 0
+    layer_idx: -1
+    n_instances: 4
+  budget:
+    gp_max_samples: 800
+    mlp_epochs: 8
+    ood_samples: 24
+    resolution_samples: 16
+    runtime_instances: 32
+  coverage_level: 0.9
+  ece_bins: 15
+  pinn:
+    convergence_patience: 200
+    convergence_tol: 1e-6
+    lr: 1e-3
+    max_instances: 40
+    min_steps: 1
+    steps: 1000
+  temperature_scaling:
+    enabled: false
+model:
+  d_model: 96
+  dropout: 0.15
+  include_time: false
+  mc_samples: 50
+  n_heads: 4
+  n_layers: 3
+num_workers: 0
+persistent_workers: false
+pin_memory: true
+prefetch_factor: 2
+seed: 42
+training:
+  amp_enabled: true
+  batch_size: 64
+  epochs: 100
+  generator_validation_enabled: false
+  grad_clip: 1.0
+  lambda_reg: 0.01
+  lr: 5e-5
+  min_epochs_before_early_stop: 50
+  normalize_k_per_instance: true
+  patience: 20
+  sanity_enabled: false
+  sanity_epochs: 200
+  sanity_lr: 5e-4
+  sanity_samples: 10
+  sanity_target_rmse: 0.13
+  sigma_floor: 0.1
+  sigma_reg_weight: 0.1
+  target_fields:
+  - k_grid
+  wandb_enabled: false
+  warmup_epochs: 5
+  weight_decay: 1e-4
