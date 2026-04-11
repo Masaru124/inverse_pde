@@ -1,0 +1,104 @@
+{
+  "checkpoint": "outputs_recovery_gpu_fast_stable/checkpoints/epoch_006_val_nll_-0.618860.pt",
+  "config": "configs/nonsmooth_v2_fast_stable_quick_eval.yaml",
+  "zero_shot_transfer_suite": {
+    "layered": {
+      "case": "layered",
+      "rmse": 0.40165469562634826,
+      "ece": 0.19564210002621016,
+      "coverage": 0.7399698893229166,
+      "n_samples": 48
+    },
+    "channelized": {
+      "case": "channelized",
+      "rmse": 0.6362718939781189,
+      "ece": 0.3169949209938447,
+      "coverage": 0.0706787109375,
+      "n_samples": 48
+    },
+    "inclusion": {
+      "case": "inclusion",
+      "rmse": 0.16446938396741947,
+      "ece": 0.2620876884708802,
+      "coverage": 0.9831136067708334,
+      "n_samples": 48
+    },
+    "realistic_gp": {
+      "case": "realistic_gp",
+      "rmse": 0.3318159592648347,
+      "ece": 0.2691528458769123,
+      "coverage": 0.8618570963541666,
+      "n_samples": 48
+    },
+    "darcy": {
+      "status": "blocked",
+      "reason": "No local Darcy dataset artifact was found in workspace."
+    }
+  },
+  "realistic_gp_five_seed_sweep": {
+    "rmse": {
+      "mean": 0.3400490880012512,
+      "std": 0.016211573034524918
+    },
+    "ece": {
+      "mean": 0.27807265520095825,
+      "std": 0.016265783458948135
+    },
+    "coverage": {
+      "mean": 0.8543131947517395,
+      "std": 0.0397508405148983
+    },
+    "n_seeds": 5,
+    "samples_per_seed": 48,
+    "seed_results": [
+      {
+        "case": "realistic_gp",
+        "rmse": 0.34048036408300203,
+        "ece": 0.2841864823518942,
+        "coverage": 0.8651529947916666,
+        "n_samples": 48,
+        "seed": 42
+      },
+      {
+        "case": "realistic_gp",
+        "rmse": 0.3169380573866268,
+        "ece": 0.2550727126266186,
+        "coverage": 0.8858642578125,
+        "n_samples": 48,
+        "seed": 43
+      },
+      {
+        "case": "realistic_gp",
+        "rmse": 0.3366241674715032,
+        "ece": 0.3012695435124139,
+        "coverage": 0.85980224609375,
+        "n_samples": 48,
+        "seed": 44
+      },
+      {
+        "case": "realistic_gp",
+        "rmse": 0.3677184088155627,
+        "ece": 0.28487957012839615,
+        "coverage": 0.77740478515625,
+        "n_samples": 48,
+        "seed": 45
+      },
+      {
+        "case": "realistic_gp",
+        "rmse": 0.3384843938983977,
+        "ece": 0.2649549818597734,
+        "coverage": 0.8833414713541666,
+        "n_samples": 48,
+        "seed": 46
+      }
+    ]
+  },
+  "reaction_diffusion_probe": {
+    "status": "tested_with_diffusion_checkpoint",
+    "note": "This is a probe using diffusion checkpoint on reaction-diffusion generated data (k only), not the paper's dedicated reaction model.",
+    "k_rmse": 0.32079051597975194,
+    "k_ece": 0.3056396634783596,
+    "k_coverage": 0.887908935546875,
+    "n_samples": 32
+  }
+}

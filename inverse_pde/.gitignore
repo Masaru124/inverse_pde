@@ -32,6 +32,18 @@ data/_bench_gpu/
 outputs*/
 results*/
 
+# Deployment-required artifacts (allowlist)
+!outputs_recovery_gpu_fast_stable/
+outputs_recovery_gpu_fast_stable/*
+!outputs_recovery_gpu_fast_stable/checkpoints/
+outputs_recovery_gpu_fast_stable/checkpoints/*
+!outputs_recovery_gpu_fast_stable/checkpoints/epoch_006_val_nll_-0.618860.pt
+
+!results_recovery_gpu_fast_stable_quick_full_v3/
+results_recovery_gpu_fast_stable_quick_full_v3/*
+!results_recovery_gpu_fast_stable_quick_full_v3/metrics.json
+!results_recovery_gpu_fast_stable_quick_full_v3/missing_claim_checks.json
+
 # Checkpoints and binary tensors under generated artifact roots
 outputs*/**/*.pt
 data/generated/**/*.pt
