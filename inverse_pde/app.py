@@ -133,12 +133,21 @@ def _checkpoint_score(path: Path) -> tuple[int, float, str]:
 @st.cache_data(show_spinner=False)
 def discover_checkpoints() -> list[str]:
     candidates: list[Path] = []
-    for pattern in (
+    # Streamlit Cloud can run with slightly different repo roots depending on
+    # app file configuration, so search from both ROOT and its parent.
+    search_roots = [ROOT]
+    if ROOT.parent != ROOT:
+        search_roots.append(ROOT.parent)
+
+    patterns = (
         "outputs*/checkpoints/*.pt",
         "outputs_recovery*/checkpoints/*.pt",
         "outputs_improved_v1/checkpoints/*.pt",
-    ):
-        candidates.extend(ROOT.glob(pattern))
+        "inverse_pde/outputs*/checkpoints/*.pt",
+    )
+    for base in search_roots:
+        for pattern in patterns:
+            candidates.extend(base.glob(pattern))
 
     unique = sorted({path.resolve() for path in candidates}, key=_checkpoint_score)
     return [str(path) for path in unique]
@@ -148,9 +157,14 @@ def _default_checkpoint() -> str | None:
     checkpoints = discover_checkpoints()
     if not checkpoints:
         return None
-    preferred = ROOT / "outputs_recovery_gpu_fast_stable" / "checkpoints" / "epoch_006_val_nll_-0.618860.pt"
-    if str(preferred) in checkpoints:
-        return str(preferred)
+    preferred_candidates = [
+        ROOT / "outputs_recovery_gpu_fast_stable" / "checkpoints" / "epoch_006_val_nll_-0.618860.pt",
+        ROOT.parent / "outputs_recovery_gpu_fast_stable" / "checkpoints" / "epoch_006_val_nll_-0.618860.pt",
+        ROOT.parent / "inverse_pde" / "outputs_recovery_gpu_fast_stable" / "checkpoints" / "epoch_006_val_nll_-0.618860.pt",
+    ]
+    for preferred in preferred_candidates:
+        if str(preferred.resolve()) in checkpoints:
+            return str(preferred.resolve())
     return checkpoints[0]
 
 
@@ -481,7 +495,10 @@ def _sidebar() -> tuple[str, str | None]:
             st.caption(f"Selected: {Path(checkpoint_path).name}")
         else:
             checkpoint_path = None
-            st.warning("No checkpoint files found under outputs*/checkpoints/")
+            st.warning(
+                "No checkpoint files found under outputs*/checkpoints/. "
+                f"Searched from: {ROOT} and {ROOT.parent}"
+            )
 
         model, meta = load_model(checkpoint_path)
         if model is not None and meta is not None:
