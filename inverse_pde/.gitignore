@@ -49,6 +49,9 @@ outputs*/**/*.pt
 data/generated/**/*.pt
 data/_bench_gpu/**/*.pt
 
+# Final allowlist overrides for deployment
+!outputs_recovery_gpu_fast_stable/checkpoints/epoch_006_val_nll_-0.618860.pt
+
 # Experiment tracking artifacts
 wandb/
 mlruns/
