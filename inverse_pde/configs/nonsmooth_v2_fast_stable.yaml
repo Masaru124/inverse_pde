@@ -1,0 +1,92 @@
+seed: 42
+deterministic: false
+num_workers: 0
+pin_memory: true
+persistent_workers: false
+prefetch_factor: 4
+
+data:
+  pde_family: diffusion
+  n_train: 40000
+  n_val: 5000
+  n_test: 5000
+  grid_size: 32
+  m_min: 20
+  m_max: 100
+  noise_min: 0.001
+  noise_max: 0.05
+  noise_type: gaussian
+  k_type: mixed
+  n_time_snapshots: 3
+  matern_nu_choices: [0.5, 1.5, 2.5]
+  n_total_generate: 50000
+  generation_shard_size: 5000
+  generation_batch_size: 32
+  generation_progress_interval: 200
+  generation_forcing_mode: finite_diff
+
+model:
+  d_model: 96
+  n_heads: 4
+  n_layers: 3
+  dropout: 0.15
+  mc_samples: 50
+  include_time: false
+
+training:
+  lr: 5e-5
+  warmup_epochs: 3
+  weight_decay: 1e-4
+  batch_size: 128
+  epochs: 40
+  early_stop_metric: val_nll
+  patience_ece: 10
+  patience: 10
+  lambda_reg: 0.01
+  grad_clip: 1.0
+  min_epochs_before_early_stop: 16
+  eval_every_epochs: 2
+  sigma_floor: 0.1
+  sigma_reg_weight: 0.1
+  sanity_enabled: false
+  sanity_samples: 10
+  sanity_epochs: 200
+  sanity_lr: 5e-4
+  sanity_target_rmse: 0.13
+  target_fields: [k_grid]
+  amp_enabled: true
+  fused_adamw: true
+  wandb_enabled: false
+  generator_validation_enabled: false
+
+evaluation:
+  ece_bins: 15
+  coverage_level: 0.90
+  inference:
+    use_mc_dropout: true
+  temperature_scaling:
+    enabled: true
+    objective: ece
+    t_min: 0.8
+    t_max: 2.5
+    n_steps: 35
+    coverage_min: 0.85
+    enforce_non_sharpening: true
+  pinn:
+    max_instances: 40
+    steps: 1000
+    min_steps: 1
+    convergence_tol: 1e-6
+    convergence_patience: 200
+    lr: 1e-3
+  attention_visualization:
+    enabled: false
+    n_instances: 4
+    layer_idx: -1
+    head_idx: 0
+  budget:
+    mlp_epochs: 8
+    gp_max_samples: 800
+    runtime_instances: 32
+    ood_samples: 24
+    resolution_samples: 16

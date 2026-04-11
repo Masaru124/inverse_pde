@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import heapq
+import math
 import time
 from contextlib import nullcontext
 from pathlib import Path
@@ -182,6 +183,7 @@ def train_model(
     sigma_reg_weight = float(config["training"].get("sigma_reg_weight", 0.1))
     min_epochs_before_early_stop = int(config["training"].get("min_epochs_before_early_stop", 0))
     warmup_epochs = int(config["training"].get("warmup_epochs", 0))
+    eval_every_epochs = max(1, int(config["training"].get("eval_every_epochs", 1)))
 
     ece_bins = int(config["evaluation"]["ece_bins"])
     coverage_level = float(config["evaluation"]["coverage_level"])
@@ -217,6 +219,11 @@ def train_model(
     use_wandb = (wandb is not None) and bool(config["training"].get("wandb_enabled", True))
     csv_logger = CSVLogger(output_dir / "training_log.csv")
 
+    best_nll_value = float("inf")
+    best_ece_value = float("inf")
+    best_by_nll_path: str | None = None
+    best_by_ece_path: str | None = None
+
     if use_wandb:
         wandb.init(project="amortized-inverse-pde", config=config)
 
@@ -224,6 +231,13 @@ def train_model(
     best_metric_value = float("inf")
     wait = 0
     history = []
+    last_val_stats = {
+        "loss": math.nan,
+        "nll": math.nan,
+        "rmse": math.nan,
+        "ece": math.nan,
+        "coverage": math.nan,
+    }
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -274,22 +288,28 @@ def train_model(
 
         train_nll = epoch_train_nll / max(1, n_batches)
         train_rmse = epoch_train_rmse / max(1, n_batches)
-        val_stats = _evaluate(
-            model=model,
-            loader=val_loader,
-            device=device,
-            lambda_reg=lambda_reg,
-            sigma_floor=sigma_floor,
-            sigma_reg_weight=sigma_reg_weight,
-            ece_bins=ece_bins,
-            coverage_level=coverage_level,
-            target_fields=target_fields,
-            amp_enabled=amp_enabled,
-        )
+        ran_validation = (epoch % eval_every_epochs == 0) or (epoch == 1) or (epoch == epochs)
+        if ran_validation:
+            val_stats = _evaluate(
+                model=model,
+                loader=val_loader,
+                device=device,
+                lambda_reg=lambda_reg,
+                sigma_floor=sigma_floor,
+                sigma_reg_weight=sigma_reg_weight,
+                ece_bins=ece_bins,
+                coverage_level=coverage_level,
+                target_fields=target_fields,
+                amp_enabled=amp_enabled,
+            )
+            last_val_stats = val_stats
+        else:
+            # Reuse last known validation metrics on train-only epochs to avoid noisy NaN logs.
+            val_stats = last_val_stats
 
         row = {
             "epoch": float(epoch),
-            "phase": "single",
+            "phase": "single" if ran_validation else "train_only",
             "lr": float(optimizer.param_groups[0]["lr"]),
             "train_nll": train_nll,
             "train_rmse": train_rmse,
@@ -316,28 +336,63 @@ def train_model(
         if use_wandb:
             wandb.log(row)
 
-        ckpt_payload = {
-            "epoch": epoch,
-            "phase": "single",
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "scheduler_state_dict": scheduler.state_dict(),
-            "val_nll": val_stats["nll"],
-            "val_ece": val_stats["ece"],
-            "monitor_metric_name": early_stop_metric,
-            "monitor_metric_value": val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"],
-            "config": config,
-        }
-        monitor_value = val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"]
-        ckpt_mgr.add(score=monitor_value, payload=ckpt_payload, epoch=epoch, metric_name=early_stop_metric)
+        if ran_validation:
+            if val_stats["nll"] < best_nll_value:
+                best_nll_value = val_stats["nll"]
+                nll_path = output_dir / "best_by_nll.pt"
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "val_nll": val_stats["nll"],
+                        "val_ece": val_stats["ece"],
+                        "config": config,
+                    },
+                    nll_path,
+                )
+                best_by_nll_path = str(nll_path)
 
-        if monitor_value < best_metric_value:
-            best_metric_value = monitor_value
-            wait = 0
-        else:
-            wait += 1
-            if wait >= patience and epoch >= min_epochs_before_early_stop:
-                break
+            if (not math.isnan(val_stats["ece"])) and val_stats["ece"] < best_ece_value:
+                best_ece_value = val_stats["ece"]
+                ece_path = output_dir / "best_by_ece.pt"
+                torch.save(
+                    {
+                        "epoch": epoch,
+                        "model_state_dict": model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "val_nll": val_stats["nll"],
+                        "val_ece": val_stats["ece"],
+                        "config": config,
+                    },
+                    ece_path,
+                )
+                best_by_ece_path = str(ece_path)
+
+            ckpt_payload = {
+                "epoch": epoch,
+                "phase": "single",
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "scheduler_state_dict": scheduler.state_dict(),
+                "val_nll": val_stats["nll"],
+                "val_ece": val_stats["ece"],
+                "monitor_metric_name": early_stop_metric,
+                "monitor_metric_value": val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"],
+                "config": config,
+            }
+            monitor_value = val_stats["ece"] if early_stop_metric == "val_ece" else val_stats["nll"]
+            ckpt_mgr.add(score=monitor_value, payload=ckpt_payload, epoch=epoch, metric_name=early_stop_metric)
+
+            if monitor_value < best_metric_value:
+                best_metric_value = monitor_value
+                wait = 0
+            else:
+                wait += 1
+                if wait >= patience and epoch >= min_epochs_before_early_stop:
+                    break
 
     if use_wandb:
         wandb.finish()
@@ -345,6 +400,10 @@ def train_model(
     return {
         "best_metric_name": early_stop_metric,
         "best_metric_value": best_metric_value,
+        "best_by_nll": best_nll_value,
+        "best_by_ece": best_ece_value,
+        "best_by_nll_checkpoint": best_by_nll_path,
+        "best_by_ece_checkpoint": best_by_ece_path,
         "history": history,
     }
 

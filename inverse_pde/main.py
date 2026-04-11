@@ -211,6 +211,10 @@ def main() -> None:
             print(f"Training complete. Best {summary['best_metric_name']}: {summary['best_metric_value']:.6f}")
         else:
             print(f"Training complete. Best val NLL: {summary['best_val_nll']:.6f}")
+        if summary.get("best_by_nll_checkpoint") is not None:
+            print(f"Best-by-NLL checkpoint: {summary['best_by_nll_checkpoint']}")
+        if summary.get("best_by_ece_checkpoint") is not None:
+            print(f"Best-by-ECE checkpoint: {summary['best_by_ece_checkpoint']}")
 
     elif args.mode == "evaluate":
         if args.checkpoint is None:

@@ -1,0 +1,52 @@
+\begin{thebibliography}{1}
+
+\bibitem{raissi2019pinn}
+Maziar Raissi, Paris Perdikaris, and George~E. Karniadakis.
+\newblock Physics-informed neural networks: A deep learning framework for
+  solving forward and inverse problems involving nonlinear partial differential
+  equations.
+\newblock {\em Journal of Computational Physics}, 378:686--707, 2019.
+
+\bibitem{li2021fno}
+Zongyi Li, Nikola Kovachki, Kamyar Azizzadenesheli, Burigede Liu, Kaushik
+  Bhattacharya, Andrew Stuart, and Anima Anandkumar.
+\newblock Fourier neural operator for parametric partial differential
+  equations.
+\newblock In {\em International Conference on Learning Representations}, 2021.
+
+\bibitem{kovachki2023neuralops}
+Nikola Kovachki, Samuel Lanthaler, and Siddhartha Mishra.
+\newblock Neural operator: Learning maps between function spaces.
+\newblock {\em Journal of Machine Learning Research}, 24(89):1--97, 2023.
+
+\bibitem{garnelo2018neural}
+Marta Garnelo, Dan Rosenbaum, Chris Maddison, Tiago Ramalho, David Saxton,
+  Murray Shanahan, Yee~Whye Teh, Danilo Rezende, and S.~M.~Ali Eslami.
+\newblock Neural processes.
+\newblock In {\em ICML Workshop on Theoretical Foundations and Applications of
+  Deep Generative Models}, 2018.
+
+\bibitem{vaswani2017attention}
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones,
+  Aidan~N. Gomez, Lukasz Kaiser, and Illia Polosukhin.
+\newblock Attention is all you need.
+\newblock In {\em Advances in Neural Information Processing Systems}, 2017.
+
+\bibitem{lu2021deeponet}
+Lu~Lu, Pengzhan Jin, Guofei Pang, Zhongqiang Zhang, and George~E. Karniadakis.
+\newblock Deeponet: Learning nonlinear operators for identification and control
+  of dynamical systems.
+\newblock {\em arXiv preprint arXiv:1910.03193}, 2021.
+
+\bibitem{guo2017calibration}
+Chuan Guo, Geoff Pleiss, Yu~Sun, and Kilian~Q. Weinberger.
+\newblock On calibration of modern neural networks.
+\newblock In {\em International Conference on Machine Learning}, pages
+  1321--1330, 2017.
+
+\bibitem{rasmussen2006gp}
+Carl~Edward Rasmussen and Christopher K.~I. Williams.
+\newblock {\em Gaussian Processes for Machine Learning}.
+\newblock MIT Press, 2006.
+
+\end{thebibliography}

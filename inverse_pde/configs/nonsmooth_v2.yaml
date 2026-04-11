@@ -11,14 +11,14 @@ data:
   n_val: 5000
   n_test: 5000
   grid_size: 32
-  m_min: 20
-  m_max: 100
+  m_min: 10
+  m_max: 150
   noise_min: 0.001
-  noise_max: 0.05
+  noise_max: 0.10
   noise_type: gaussian
   k_type: mixed
   n_time_snapshots: 3
-  matern_nu_choices: [0.5, 1.5, 2.5]
+  matern_nu_choices: [0.0, 0.5, 1.5, 2.5]
   n_total_generate: 50000
   generation_shard_size: 5000
   generation_batch_size: 32

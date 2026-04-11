@@ -1,0 +1,45 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {2}Method}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}Experimental Setup}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Problem Formulation}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Analytical Data Generation}{2}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Model Architecture}{2}{subsection.2.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.4.1}Cross-Attention Encoder}{2}{subsubsection.2.4.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Architecture overview of the amortized inverse-PDE model: observation embedding, cross-attention encoding, and probabilistic decoding to per-grid Gaussian outputs.}}{3}{figure.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {2.4.2}Probabilistic Decoder}{3}{subsubsection.2.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Training Objective}{3}{subsection.2.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Extension to Reaction-Diffusion}{3}{subsection.2.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Experiments}{3}{section.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Setup}{3}{subsection.3.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Main comparison on in-distribution test data.}}{4}{table.1}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces In-distribution comparison of RMSE and ECE across GP, PINN, and the amortized model. Lower is better for both metrics.}}{4}{figure.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.2}Reproducibility and reporting protocol}{4}{subsection.3.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces OOD robustness for the amortized model (d96).}}{4}{table.2}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Updated reliability diagram comparing predicted confidence vs empirical coverage. Curves closer to the diagonal indicate better calibration.}}{5}{figure.3}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces OOD robustness under sensing and prior shifts. The dashed line marks nominal 90\% coverage.}}{5}{figure.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Inference latency comparison on a log scale. The amortized model preserves quality while reducing inference latency by roughly two to three orders of magnitude vs PINN.}}{6}{figure.5}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Zero-shot generalization to out-of-training coefficient distributions. All results use the model trained exclusively on GP-sampled coefficients, evaluated without any fine-tuning.}}{6}{table.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.3}Zero-shot Generalization Across Coefficient Distributions}{6}{subsection.3.3}\protected@file@percent }
+\citation{raissi2019pinn}
+\citation{li2021fno}
+\citation{kovachki2023neuralops}
+\citation{vaswani2017attention}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.4}Second PDE Family: Reaction-Diffusion Pilot}{7}{subsection.3.4}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Reaction-diffusion pilot results (epoch 10 checkpoint; k recovery is the reliable signal).}}{7}{table.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.5}Statistical and practical interpretation}{7}{subsection.3.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {4}Related Work}{7}{section.4}\protected@file@percent }
+\citation{rasmussen2006gp}
+\bibstyle{unsrt}
+\bibdata{references}
+\bibcite{raissi2019pinn}{1}
+\bibcite{li2021fno}{2}
+\bibcite{kovachki2023neuralops}{3}
+\bibcite{vaswani2017attention}{4}
+\bibcite{rasmussen2006gp}{5}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Limitations}{8}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Conclusion}{8}{section.6}\protected@file@percent }
+\gdef \@abspage@last{8}

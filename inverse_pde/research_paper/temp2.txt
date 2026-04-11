@@ -1,0 +1,19 @@
+where repeated solves and uncertainty reliability both matter, while motivating future work on
+reaction-rate identifiability, full-scale multi-family training, real-data validation, and theoretical
+guarantees.
+
+References
+[1] M. Raissi, P. Perdikaris, and G. E. Karniadakis. Physics-informed neural networks: A deep
+learning framework for solving forward and inverse problems involving nonlinear partial
+differential equations. Journal of Computational Physics, 378:686–707, 2019.
+[2] A. Vaswani et al. Attention Is All You Need. In NeurIPS, 2017.
+[3] Z. Li et al. Fourier Neural Operator for Parametric Partial Differential Equations. In ICLR,
+2021.
+[4] N. Kovachki et al. Neural Operator: Learning Maps Between Function Spaces. JMLR,
+24(89):1–97, 2023.
+[5] C. E. Rasmussen and C. K. I. Williams. Gaussian Processes for Machine Learning. MIT
+Press, 2006.
+
+8
+
+

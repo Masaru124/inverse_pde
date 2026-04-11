@@ -60,6 +60,7 @@ def evaluate_main_model(
     coverage_level: float,
     target_fields: list[str],
     temperature: float = 1.0,
+    use_mc_dropout: bool = False,
 ) -> dict:
     model.eval()
     stats = {"rmse": 0.0, "ece": 0.0, "coverage": 0.0}
@@ -69,13 +70,22 @@ def evaluate_main_model(
 
     for batch in test_loader:
         batch = _move_batch(batch, device)
-        mu, sigma = model(
-            batch["obs_coords"],
-            batch.get("obs_times"),
-            batch["obs_values"],
-            batch["obs_key_padding_mask"],
-            mc_dropout=False,
-        )
+        if use_mc_dropout:
+            mu, epistemic_std, aleatoric_sigma = model.predict_with_uncertainty(
+                obs_coords=batch["obs_coords"],
+                obs_times=batch.get("obs_times"),
+                obs_values=batch["obs_values"],
+                obs_key_padding_mask=batch["obs_key_padding_mask"],
+            )
+            sigma = torch.sqrt(torch.clamp(aleatoric_sigma**2 + epistemic_std**2, min=1e-12))
+        else:
+            mu, sigma = model(
+                batch["obs_coords"],
+                batch.get("obs_times"),
+                batch["obs_values"],
+                batch["obs_key_padding_mask"],
+                mc_dropout=False,
+            )
         sigma = sigma * temperature
         target = _stack_targets(batch=batch, target_fields=target_fields)
         met = batch_metrics(mu=mu, sigma=sigma, target=target, ece_bins=ece_bins, coverage_level=coverage_level)
@@ -121,6 +131,7 @@ def fit_temperature_scaling(
     coverage_level: float = 0.90,
     coverage_min: float | None = None,
     enforce_non_sharpening: bool = False,
+    use_mc_dropout: bool = False,
 ) -> dict:
     model.eval()
     coverage_min = coverage_level - 0.05 if coverage_min is None else coverage_min
@@ -139,13 +150,22 @@ def fit_temperature_scaling(
         n_batches = 0
         for batch in val_loader:
             batch = _move_batch(batch, device)
-            mu, sigma = model(
-                batch["obs_coords"],
-                batch.get("obs_times"),
-                batch["obs_values"],
-                batch["obs_key_padding_mask"],
-                mc_dropout=False,
-            )
+            if use_mc_dropout:
+                mu, epistemic_std, aleatoric_sigma = model.predict_with_uncertainty(
+                    obs_coords=batch["obs_coords"],
+                    obs_times=batch.get("obs_times"),
+                    obs_values=batch["obs_values"],
+                    obs_key_padding_mask=batch["obs_key_padding_mask"],
+                )
+                sigma = torch.sqrt(torch.clamp(aleatoric_sigma**2 + epistemic_std**2, min=1e-12))
+            else:
+                mu, sigma = model(
+                    batch["obs_coords"],
+                    batch.get("obs_times"),
+                    batch["obs_values"],
+                    batch["obs_key_padding_mask"],
+                    mc_dropout=False,
+                )
             target = _stack_targets(batch=batch, target_fields=target_fields)
             sigma_t = sigma * t
             met = batch_metrics(
@@ -352,7 +372,13 @@ def evaluate_pinn_baseline(
 
 
 @torch.no_grad()
-def runtime_main_vs_pinn(model, test_loader, device: torch.device, n_instances: int = 100) -> dict:
+def runtime_main_vs_pinn(
+    model,
+    test_loader,
+    device: torch.device,
+    n_instances: int = 100,
+    use_mc_dropout: bool = False,
+) -> dict:
     model.eval()
 
     main_times = []
@@ -371,12 +397,15 @@ def runtime_main_vs_pinn(model, test_loader, device: torch.device, n_instances: 
             mask = batch["obs_key_padding_mask"][i : i + 1].to(device)
 
             t0 = time.perf_counter()
-            _ = model.predict_with_uncertainty(
-                obs_coords=obs_coords,
-                obs_times=obs_times,
-                obs_values=obs_values,
-                obs_key_padding_mask=mask,
-            )
+            if use_mc_dropout:
+                _ = model.predict_with_uncertainty(
+                    obs_coords=obs_coords,
+                    obs_times=obs_times,
+                    obs_values=obs_values,
+                    obs_key_padding_mask=mask,
+                )
+            else:
+                _ = model(obs_coords, obs_times, obs_values, mask, mc_dropout=False)
             main_times.append(time.perf_counter() - t0)
 
             count += 1
@@ -399,6 +428,7 @@ def evaluate_ood(
     pde_family: str,
     n_samples: int = 256,
     temperature: float = 1.0,
+    use_mc_dropout: bool = False,
 ) -> dict:
     cases = {
         "high_noise": {"noise_min": 0.1, "noise_max": 0.1, "m_min": 20, "m_max": 100, "noise_type": "gaussian"},
@@ -424,7 +454,16 @@ def evaluate_ood(
                 targets.append(sample[name].unsqueeze(0).to(device).float())
             target = targets[0] if len(targets) == 1 else torch.stack(targets, dim=-1)
 
-            mu, sigma = model(obs_coords, obs_times, obs_values, mask, mc_dropout=False)
+            if use_mc_dropout:
+                mu, epistemic_std, aleatoric_sigma = model.predict_with_uncertainty(
+                    obs_coords=obs_coords,
+                    obs_times=obs_times,
+                    obs_values=obs_values,
+                    obs_key_padding_mask=mask,
+                )
+                sigma = torch.sqrt(torch.clamp(aleatoric_sigma**2 + epistemic_std**2, min=1e-12))
+            else:
+                mu, sigma = model(obs_coords, obs_times, obs_values, mask, mc_dropout=False)
             sigma = sigma * temperature
             met = batch_metrics(mu=mu, sigma=sigma, target=target, ece_bins=ece_bins, coverage_level=coverage_level)
             rmse_vals.append(met["rmse"])
@@ -504,6 +543,8 @@ def run_full_evaluation(
 
     temp_cfg = config["evaluation"].get("temperature_scaling", {})
     temp_enabled = bool(temp_cfg.get("enabled", False))
+    infer_cfg = config["evaluation"].get("inference", {})
+    use_mc_dropout = bool(infer_cfg.get("use_mc_dropout", False))
     temperature = 1.0
     calibration_val_objective = None
     calibration_val_coverage = None
@@ -526,6 +567,7 @@ def run_full_evaluation(
             coverage_level=coverage_level,
             coverage_min=float(temp_cfg.get("coverage_min", coverage_level - 0.05)),
             enforce_non_sharpening=bool(temp_cfg.get("enforce_non_sharpening", False)),
+            use_mc_dropout=use_mc_dropout,
         )
         temperature = float(calibration_result["temperature"])
         calibration_val_objective = float(calibration_result["objective"])
@@ -545,6 +587,7 @@ def run_full_evaluation(
         coverage_level=coverage_level,
         target_fields=target_fields,
         temperature=temperature,
+        use_mc_dropout=use_mc_dropout,
     )
 
     if calibration_only:
@@ -609,6 +652,7 @@ def run_full_evaluation(
             test_loader=test_loader,
             device=device,
             n_instances=int(eval_budget.get("runtime_instances", 100)),
+            use_mc_dropout=bool(infer_cfg.get("timing_use_mc_dropout", False)),
         )
         print(f"[EVAL] Running OOD suite (samples/case={int(eval_budget.get('ood_samples', 64))})...", flush=True)
         ood = evaluate_ood(
@@ -621,6 +665,7 @@ def run_full_evaluation(
             pde_family=pde_family,
             n_samples=int(eval_budget.get("ood_samples", 64)),
             temperature=temperature,
+            use_mc_dropout=use_mc_dropout,
         )
         print(
             f"[EVAL] Running resolution transfer (samples={int(eval_budget.get('resolution_samples', 32))})...",
@@ -656,6 +701,7 @@ def run_full_evaluation(
             "temperature_scaling_enabled": temp_enabled,
             "objective": calibration_objective_name,
             "temperature": float(temperature),
+            "use_mc_dropout": use_mc_dropout,
             "val_objective_at_temperature": calibration_val_objective,
             "val_coverage_at_temperature": calibration_val_coverage,
             "feasible_candidate_count": calibration_feasible_candidates,
