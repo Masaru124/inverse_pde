@@ -1,0 +1,31 @@
+{
+  "checkpoint": "C:\\Users\\User\\Desktop\\neural network for pde\\inverse_pde\\outputs_recovery_gpu_fast_stable\\checkpoints\\epoch_006_val_nll_-0.618860.pt",
+  "data_dir": "C:\\Users\\User\\Desktop\\neural network for pde\\inverse_pde\\dbar\\data",
+  "note": "Real DBAR files used. NtoD complex matrix reduced to real part for scalar-input model compatibility.",
+  "setup": {
+    "n_cases": 32,
+    "n_boundary": 32,
+    "finetune_steps": 120,
+    "lr": 0.0001
+  },
+  "option_a_zero_shot": {
+    "rmse": 0.2200704412534833,
+    "mae": 0.16494074976071715,
+    "coverage_90": 0.965728759765625
+  },
+  "option_b_decoder_finetune": {
+    "rmse": 0.17354769259691238,
+    "mae": 0.10668583447113633,
+    "coverage_90": 0.96051025390625
+  },
+  "delta_b_minus_a": {
+    "rmse": -0.04652274865657091,
+    "mae": -0.05825491528958082,
+    "coverage_90": -0.005218505859375
+  },
+  "finetune_loss": {
+    "first": -0.871743381023407,
+    "last": -1.2093982696533203,
+    "min": -1.2098629474639893
+  }
+}

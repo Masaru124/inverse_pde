@@ -1,0 +1,31 @@
+{
+  "checkpoint": "C:\\Users\\User\\Desktop\\neural network for pde\\inverse_pde\\outputs_recovery_gpu_fast_stable\\checkpoints\\epoch_006_val_nll_-0.618860.pt",
+  "device": "cuda",
+  "setup": {
+    "eval_cases": 20,
+    "n_boundary": 32,
+    "finetune_steps": 60,
+    "batch_size": 4,
+    "lr": 0.0002
+  },
+  "option_a_zero_shot": {
+    "rmse": 0.2326483502984047,
+    "mae": 0.2018807115033269,
+    "coverage_90": 0.979736328125
+  },
+  "option_b_decoder_finetune": {
+    "rmse": 0.23026140369474887,
+    "mae": 0.19868714585900307,
+    "coverage_90": 0.959716796875
+  },
+  "delta_b_minus_a": {
+    "rmse": -0.0023869466036558207,
+    "mae": -0.003193565644323826,
+    "coverage_90": -0.02001953125
+  },
+  "finetune_loss": {
+    "first": 1.277050495147705,
+    "last": -0.42553967237472534,
+    "min": -1.0899155139923096
+  }
+}

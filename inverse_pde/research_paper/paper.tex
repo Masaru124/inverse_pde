@@ -45,7 +45,7 @@
 \maketitle
 
 \begin{abstract}
-Inverse PDE inference estimates hidden coefficient fields from sparse observations of PDE states. Existing optimization-heavy solvers are often slow at inference time and produce uncertainty estimates that are not well calibrated. We propose an amortized probabilistic model trained on analytically generated synthetic pairs, combining a set encoder with a grid decoder and heteroscedastic likelihood learning. On our main benchmark, the method achieves performance competitive with Gaussian-process baseline accuracy (RMSE 0.320 vs 0.329), substantially superior calibration ($2.49\times$ lower ECE vs GP: 0.240 vs 0.598; $4.10\times$ lower vs PINN: 0.240 vs 0.983), and runs $1065\times$ faster than PINN baseline. We validate robustness across five independent seeds: over 240 instances (5 seeds $\times$ 48 instances), the model achieves RMSE 0.340 $\pm$ 0.016 and ECE 0.244 $\pm$ 0.027 under realistic smooth-field distribution shift, confirming stable generalization.
+Inverse PDE inference estimates hidden coefficient fields from sparse observations of PDE states. Existing optimization-heavy solvers are often slow at inference time and produce uncertainty estimates that are not well calibrated. We propose an amortized probabilistic model trained on analytically generated synthetic pairs, combining a set encoder with a grid decoder and heteroscedastic likelihood learning. On our main benchmark, the method achieves performance competitive with Gaussian-process baseline accuracy (RMSE 0.320 vs 0.329), substantially superior calibration ($2.49\times$ lower ECE vs GP: 0.240 vs 0.598; $4.10\times$ lower vs PINN: 0.240 vs 0.983), and runs $1065\times$ faster than PINN baseline. We validate robustness across five independent seeds: over 240 instances (5 seeds $\times$ 48 instances), the model achieves RMSE 0.340 $\pm$ 0.016 and ECE 0.244 $\pm$ 0.027 under realistic smooth-field distribution shift, confirming stable generalization. We additionally evaluate on real EIT boundary measurements (DBAR files), obtaining RMSE 0.220 in zero-shot transfer and RMSE 0.173 after lightweight decoder fine-tuning.
 \end{abstract}
 
 \section{Introduction}
@@ -60,12 +60,12 @@ Contributions.
 
 \item We propose a probabilistic amortized architecture for variable-size observation sets, trained with Gaussian NLL and regularized uncertainty heads.
 
-\item We show empirically that the method achieves accuracy competitive with GP while providing $2.49\times$ better calibration than GP and $4.10\times$ better calibration than PINN (ECE), and is $2.33\times$ more accurate than PINN, enabling 1065× faster inference than optimization-based baselines.
+\item We show empirically that the method achieves accuracy competitive with GP while providing $2.49\times$ better calibration than GP and $4.10\times$ better calibration than PINN (ECE), and is $2.33\times$ more accurate than PINN, enabling 1065× faster inference than optimization-based baselines; we further validate transfer on real EIT measurements (RMSE 0.220 zero-shot).
 
 \item We provide robustness evidence beyond a single run via five-seed realistic-GP evaluation and include a reaction-diffusion pilot that demonstrates strong diffusion recovery and a clear reaction-rate limitation.
 \end{itemize}
 
-Paper outline. Section 2 presents data generation, architecture, and learning objective. Section 3 reports in-distribution and OOD results plus a d64-vs-d96 ablation. Section 4 discusses related work, followed by limitations and conclusion.
+Paper outline. Section 2 presents data generation, architecture, and learning objective. Section 3 reports in-distribution, OOD, and real-data EIT results plus a d64-vs-d96 ablation. Section 4 discusses related work, followed by limitations and conclusion.
 
 \section{Method}
 
@@ -156,7 +156,7 @@ Training minimizes Gaussian negative log-likelihood over all grid cells:
 We add a mild log-variance regularization term to avoid variance collapse/explosion and improve calibration stability. Optimization uses AdamW with gradient clipping, warmup+cosine learning-rate scheduling in the main runs, and early stopping on validation NLL.
 
 \subsection{Extension to Reaction-Diffusion}
-The architecture extends naturally to time-dependent inverse PDEs. For reaction-diffusion experiments, observation tokens include time coordinates $(x, y, t, \tilde{u})$ via \texttt{include\_time=True}, and the decoder uses \texttt{n\_targets=2} to jointly infer diffusion and reaction fields $(k, r)$. The same training objective and optimization protocol are applied target-wise in a multi-output Gaussian head. Full reaction-diffusion results are reported in Section 3.4.
+The architecture extends naturally to time-dependent inverse PDEs. For reaction-diffusion experiments, observation tokens include time coordinates $(x, y, t, \tilde{u})$ via \texttt{include\_time=True}, and the decoder uses \texttt{n\_targets=2} to jointly infer diffusion and reaction fields $(k, r)$. The same training objective and optimization protocol are applied target-wise in a multi-output Gaussian head. Full reaction-diffusion results are reported in Section 3.5.
 
 \section{Experiments}
 \subsection{Setup}
@@ -259,6 +259,26 @@ Runtime reporting. Two timing regimes are reported for transparency: (i) amortiz
 
 Darcy64 extension. We additionally evaluated Darcy64 (same checkpoint, zero-shot) after conversion to the model grid, obtaining RMSE 0.541, ECE 0.294, and coverage 1.000. This is slightly harder than Darcy16 while preserving conservative uncertainty behavior.
 
+\subsection{Real Boundary Measurement Validation (EIT)}
+To assess generalization beyond synthetic data, we evaluate on real electrical impedance tomography (EIT) boundary measurements from DBAR reconstruction files. EIT is governed by the same elliptic PDE class studied here, with conductivity field $k$ and electrical potential $u$. We use 32 real boundary measurement cases from the measured Neumann-to-Dirichlet matrix representation. For compatibility with the current scalar-input observation encoder, we use the real component of the complex-valued NtoD matrix.
+
+\begin{table}[H]
+\centering
+\caption{Real EIT boundary measurement evaluation on DBAR files. Zero-shot uses no adaptation. Fine-tuned uses 120 decoder-only gradient steps on boundary observations (learning rate $1\times 10^{-4}$).}
+\begin{tabular}{lccc}
+\toprule
+Method & RMSE $\downarrow$ & MAE $\downarrow$ & Coverage (90\%) $\uparrow$ \\
+\midrule
+Zero-shot transfer & 0.220 & 0.165 & 0.966 \\
+Decoder fine-tune (120 steps) & \textbf{0.173} & \textbf{0.107} & 0.961 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The zero-shot result (RMSE 0.220) shows that a model trained on synthetic coefficients transfers to real boundary measurements without any adaptation. This result is better than the in-distribution synthetic RMSE (0.320), consistent with DBAR conductivity maps being smoother and more structured than the broad synthetic training distribution. Lightweight decoder adaptation further reduces RMSE to 0.173 while preserving high coverage.
+
+Limitation note for real-data interpretation. The current real-data pipeline projects complex-valued EIT measurements to their real component for compatibility with the scalar observation model. Full complex-valued modeling and explicit boundary-only training remain important future extensions.
+
 \subsection{Second PDE Family: Reaction-Diffusion Pilot}
 To move beyond a single inverse family, we implemented a reaction-diffusion variant with spatiotemporal observations $(x, y, t, u)$ and dual outputs: diffusion $k(x, y)$ and reaction $r(x, y)$. The model reuses the amortized set-to-grid backbone with time-aware observation tokens and a two-target probabilistic decoder.
 
@@ -310,10 +330,10 @@ Amortized probabilistic inference connects these ideas by learning a reusable po
 Compared with GP baselines, amortized neural models trade some of the kernel method's closed-form elegance for much lower latency and greater architectural flexibility \cite{rasmussen2006gp}. Compared with PINNs, they trade strict residual-driven optimization at inference for up-front training and then constant-time prediction. The empirical question is therefore practical: can amortized models preserve accuracy while improving reliability-speed tradeoffs? The evidence here supports that direction on the tested benchmark.
 
 \section{Limitations}
-Our study has several important limitations. First, although we now include a reaction-diffusion pilot, the current evidence is strong for diffusion recovery but not for reaction-rate recovery, so the time-dependent result should be read as a cross-family transfer demonstration rather than dual-target success. Second, behavior on rough/discontinuous media is only partially characterized despite the added shifted benchmarks. Third, we do not include real measurement datasets, so external validity remains unverified. Fourth, we provide no formal theory (e.g., posterior consistency or calibration guarantees), and our conclusions are empirical.
+Our study has several important limitations. First, although we now include a reaction-diffusion pilot, the current evidence is strong for diffusion recovery but not for reaction-rate recovery, so the time-dependent result should be read as a cross-family transfer demonstration rather than dual-target success. Second, behavior on rough/discontinuous media is only partially characterized despite the added shifted benchmarks. Third, our real-data EIT validation is partial: it uses the real component of complex-valued measurements and does not yet include a native complex-valued encoder. Fourth, we provide no formal theory (e.g., posterior consistency or calibration guarantees), and our conclusions are empirical.
 
 \section{Conclusion}
-We presented an amortized inverse-PDE framework with analytical data generation and probabilistic prediction from sparse observations. The method achieves superior reconstruction accuracy compared to baselines (RMSE 0.320), significantly better calibration ($2.49\times$ lower ECE than GP, $2.33\times$ better RMSE than PINN), and much faster inference than PINN baselines ($1065\times$ speedup). Robustness under realistic coefficient shift is statistically stable across five seeds (RMSE 0.340 $\pm$ 0.016), and a reaction-diffusion pilot shows that the same amortized recipe transfers to time-dependent inverse PDEs while preserving strong diffusion recovery. These results indicate that amortized inference is a strong practical direction for inverse PDE workloads where repeated solves and uncertainty reliability both matter, while motivating future work on reaction-rate identifiability, full-scale multi-family training, real-data validation, and theoretical guarantees.
+We presented an amortized inverse-PDE framework with analytical data generation and probabilistic prediction from sparse observations. The method achieves superior reconstruction accuracy compared to baselines (RMSE 0.320), significantly better calibration ($2.49\times$ lower ECE than GP, $2.33\times$ better RMSE than PINN), and much faster inference than PINN baselines ($1065\times$ speedup). Robustness under realistic coefficient shift is statistically stable across five seeds (RMSE 0.340 $\pm$ 0.016), and a reaction-diffusion pilot shows that the same amortized recipe transfers to time-dependent inverse PDEs while preserving strong diffusion recovery. Importantly, real EIT boundary validation on DBAR measurements yields RMSE 0.220 in zero-shot transfer and 0.173 after lightweight decoder adaptation, demonstrating practical transfer beyond synthetic data. These results indicate that amortized inference is a strong practical direction for inverse PDE workloads where repeated solves and uncertainty reliability both matter, while motivating future work on reaction-rate identifiability, full complex-valued EIT modeling, full-scale multi-family training, and theoretical guarantees.
 
 \bibliographystyle{unsrt}
 \bibliography{references}

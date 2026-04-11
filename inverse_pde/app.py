@@ -19,6 +19,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import scipy.io as sio
 import streamlit as st
 import torch
 import torch.nn.functional as F
@@ -31,6 +32,8 @@ if str(ROOT) not in sys.path:
 PROJECT_METRICS_PATH = ROOT / "results_recovery_gpu_fast_stable_quick_full_v3" / "metrics.json"
 ZERO_SHOT_PATH = ROOT / "results_recovery_gpu_fast_stable_quick_full_v3" / "missing_claim_checks.json"
 SEED_SWEEP_PATH = ROOT / "results_recovery_gpu_fast_stable_quick_full_v3" / "missing_claim_checks.json"
+DBAR_RESULTS_PATH = ROOT / "results_option_ab_dbar_real.json"
+DBAR_DATA_DIR = ROOT / "dbar" / "data"
 
 THEME_BG = "#0A0E1A"
 THEME_PANEL = "#0D1525"
@@ -443,6 +446,40 @@ def _apply_axis_theme(ax):
 def _show_fig(fig) -> None:
     st.pyplot(fig, width="stretch")
     plt.close(fig)
+
+
+@st.cache_data(show_spinner=False)
+def _load_dbar_case() -> dict[str, np.ndarray] | None:
+    nd_path = DBAR_DATA_DIR / "ND.mat"
+    recon_path = DBAR_DATA_DIR / "recon.mat"
+    if not nd_path.exists() or not recon_path.exists():
+        return None
+
+    nd = np.asarray(sio.loadmat(nd_path, squeeze_me=True, struct_as_record=False)["NtoD"])
+    recon = np.asarray(sio.loadmat(recon_path, squeeze_me=True, struct_as_record=False)["recon"])
+    if nd.shape != (32, 32) or recon.size != 4096:
+        return None
+
+    obs_values = np.real(nd).astype(np.float32)
+    obs_values = (obs_values - obs_values.mean(axis=1, keepdims=True)) / (obs_values.std(axis=1, keepdims=True) + 1e-6)
+
+    theta = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
+    obs_coords = np.stack([0.5 + 0.5 * np.cos(theta), 0.5 + 0.5 * np.sin(theta)], axis=1).astype(np.float32)
+
+    recon_grid = np.real(recon).astype(np.float32).reshape(64, 64)
+    recon_t = torch.as_tensor(recon_grid, dtype=torch.float32).unsqueeze(0).unsqueeze(0)
+    recon_32 = F.interpolate(recon_t, size=(32, 32), mode="bilinear", align_corners=True).squeeze(0).squeeze(0).cpu().numpy()
+
+    return {
+        "obs_coords": obs_coords,
+        "obs_values_rows": obs_values,
+        "true_k": recon_32,
+    }
+
+
+@st.cache_data(show_spinner=False)
+def _load_dbar_results() -> dict[str, Any]:
+    return _load_json(DBAR_RESULTS_PATH)
 
 
 def _render_metric_cards(items: list[tuple[str, str, str]]) -> None:
@@ -1044,13 +1081,47 @@ def _render_real_world_applications(checkpoint_path: str | None):
                 st.write("**Why it matters:** real-time decisions in medicine, energy, infrastructure, and manufacturing.")
                 st.caption(f"Limitation: {limitation}")
             with c2:
-                demo = _generate_case_prediction(domain, checkpoint_path, 32 if domain != "eit" else 16, 0.01, idx + 5)
-                if demo is None:
-                    st.info("Model unavailable for preview.")
+                if domain == "eit":
+                    model, meta = load_model(checkpoint_path)
+                    dbar_case = _load_dbar_case()
+                    dbar_results = _load_dbar_results()
+                    if model is None or meta is None or dbar_case is None:
+                        st.info("DBAR real-data preview unavailable.")
+                    else:
+                        row_id = 0
+                        pred_k, ale, epi, elapsed_ms = run_inference(
+                            model,
+                            dbar_case["obs_coords"],
+                            dbar_case["obs_values_rows"][row_id],
+                        )
+                        fig = _plot_prediction_panels(
+                            dbar_case["true_k"],
+                            pred_k,
+                            ale,
+                            epi,
+                            dbar_case["obs_coords"],
+                            dbar_case["obs_values_rows"][row_id],
+                            title="Electrical Impedance Tomography (real DBAR case)",
+                        )
+                        _show_fig(fig)
+                        opt_a = dbar_results.get("option_a_zero_shot", {})
+                        opt_b = dbar_results.get("option_b_decoder_finetune", {})
+                        if opt_a and opt_b:
+                            st.caption(
+                                "Real DBAR boundary results: "
+                                f"zero-shot RMSE {opt_a.get('rmse', float('nan')):.3f}, "
+                                f"decoder fine-tune RMSE {opt_b.get('rmse', float('nan')):.3f}, "
+                                f"coverage {100.0 * opt_b.get('coverage_90', float('nan')):.1f}%"
+                            )
+                        st.caption(f"Single-case inference: {elapsed_ms:.2f} ms")
                 else:
-                    fig = _plot_prediction_panels(demo["true_k"], demo["pred_k"], demo["aleatoric"], demo["epistemic"], demo["obs_coords"], demo["obs_values"], title=title)
-                    _show_fig(fig)
-                    st.caption(f"RMSE: {demo['rmse']:.3f} | Inference: {demo['elapsed_ms']:.2f} ms")
+                    demo = _generate_case_prediction(domain, checkpoint_path, 32, 0.01, idx + 5)
+                    if demo is None:
+                        st.info("Model unavailable for preview.")
+                    else:
+                        fig = _plot_prediction_panels(demo["true_k"], demo["pred_k"], demo["aleatoric"], demo["epistemic"], demo["obs_coords"], demo["obs_values"], title=title)
+                        _show_fig(fig)
+                        st.caption(f"RMSE: {demo['rmse']:.3f} | Inference: {demo['elapsed_ms']:.2f} ms")
             st.markdown("</div>", unsafe_allow_html=True)
 
 
